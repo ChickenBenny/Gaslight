@@ -1,0 +1,38 @@
+# --- Design / process docs: kept local, tracked via GitHub issues instead of in-repo ---
+/docs/
+
+# --- Go ---
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/gaslight
+/bin/
+/dist/
+
+# Test binary / coverage
+*.test
+*.out
+coverage.*
+/coverage/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency vendoring (uncomment if not vendoring)
+# /vendor/
+
+# --- Editor / OS ---
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# --- Env / local ---
+.env
+.env.local
+*.local
