@@ -2,6 +2,7 @@ package chain
 
 import (
 	"errors"
+	"slices"
 	"sync/atomic"
 )
 
@@ -52,23 +53,7 @@ func (d *Driver) Snapshot() *ChainSnapshot {
 func (d *Driver) ProduceBlock(txs []Tx) *Block {
 	cur := d.current.Load()
 	parent := cur.Head()
-
-	d.seq++
-	number := parent.Number + 1
-
-	receipts := make([]Receipt, len(txs))
-	for i, tx := range txs {
-		receipts[i] = Receipt{TxHash: hashTx(tx), Status: 1}
-	}
-
-	block := &Block{
-		Number:     number,
-		Hash:       hashBlock(d.seq, number, parent.Hash, txs),
-		ParentHash: parent.Hash,
-		Txs:        txs,
-		Receipts:   receipts,
-	}
-
+	block := d.buildBlock(parent, txs)
 	ns := cur.clone()
 	ns.blocks[block.Hash] = block
 	ns.canonical = append(ns.canonical, block.Hash)
@@ -120,13 +105,7 @@ func (d *Driver) Reorg(forkFrom uint64, branch [][]Tx) error {
 
 	newBlocks := make([]*Block, 0, len(branch))
 	for _, txList := range branch {
-		number := parent.Number + 1
-		block := &Block{
-			Number:     number,
-			Hash:       hashBlock(d.seq, number, parent.Hash, txList),
-			ParentHash: parent.Hash,
-			Txs:        txList,
-		}
+		block := d.buildBlock(parent, txList)
 		newBlocks = append(newBlocks, block)
 		parent = block
 	}
@@ -141,4 +120,21 @@ func (d *Driver) Reorg(forkFrom uint64, branch [][]Tx) error {
 	ns.head = newBlocks[len(newBlocks)-1].Hash
 	d.current.Store(ns)
 	return nil
+}
+
+func (d *Driver) buildBlock(parent *Block, txs []Tx) *Block {
+	d.seq++
+	number := parent.Number + 1
+	receipts := make([]Receipt, len(txs))
+	for i, tx := range txs {
+		receipts[i] = Receipt{TxHash: hashTx(tx), Status: 1}
+	}
+
+	return &Block{
+		Number:     number,
+		Hash:       hashBlock(d.seq, number, parent.Hash, txs),
+		ParentHash: parent.Hash,
+		Txs:        slices.Clone(txs),
+		Receipts:   receipts,
+	}
 }
