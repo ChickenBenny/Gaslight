@@ -3,6 +3,7 @@ package chain
 import (
 	"errors"
 	"slices"
+	"sync"
 	"sync/atomic"
 )
 
@@ -20,6 +21,7 @@ var (
 // current snapshot and atomically publishes the new one, so readers are
 // lock-free and never observe torn state.
 type Driver struct {
+	mu      sync.Mutex
 	current atomic.Pointer[ChainSnapshot]
 	seq     uint64
 	chainID uint64
@@ -51,6 +53,9 @@ func (d *Driver) Snapshot() *ChainSnapshot {
 // ProduceBlock appends a block containing txs to the canonical chain and
 // returns it, minting a success receipt for every tx.
 func (d *Driver) ProduceBlock(txs []Tx) *Block {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	cur := d.current.Load()
 	parent := cur.Head()
 	block := d.buildBlock(parent, txs)
@@ -66,6 +71,9 @@ func (d *Driver) ProduceBlock(txs []Tx) *Block {
 // Finalize marks height as finalized: blocks at or below it can no longer be
 // reorged away. height must lie within [current finalized, head].
 func (d *Driver) Finalize(height uint64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	cur := d.current.Load()
 
 	if height > cur.Height() {
@@ -86,6 +94,9 @@ func (d *Driver) Finalize(height uint64) error {
 // block per tx list). The branch must fork at or above the finalized height
 // and outgrow the current head; orphaned blocks stay reachable by hash.
 func (d *Driver) Reorg(forkFrom uint64, branch [][]Tx) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	cur := d.current.Load()
 
 	if forkFrom < cur.Finalized() {
