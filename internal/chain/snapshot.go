@@ -49,9 +49,10 @@ func (s *ChainSnapshot) ReceiptOf(txHash Hash) *Receipt {
 	height := s.Head().Number
 	for h := 0; h <= int(height); h++ {
 		blk := s.blocks[s.canonical[h]]
-		for i, r := range blk.Receipts {
-			if r.TxHash == txHash {
-				return &blk.Receipts[i]
+		for i := range blk.Receipts {
+			if blk.Receipts[i].TxHash == txHash {
+				r := blk.Receipts[i]
+				return &r
 			}
 		}
 	}
