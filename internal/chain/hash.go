@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"io"
+	"math/big"
 )
 
 // hashTx digests every Tx field; variable-length fields are length-prefixed
@@ -13,12 +14,7 @@ func hashTx(tx Tx) Hash {
 	writeBytes(h, []byte(tx.ID))
 	h.Write(tx.From[:])
 	h.Write(tx.To[:])
-
-	var value []byte
-	if tx.Value != nil {
-		value = tx.Value.Bytes()
-	}
-	writeBytes(h, value)
+	writeValue(h, tx.Value)
 
 	var hash Hash
 	copy(hash[:], h.Sum(nil))
@@ -48,6 +44,24 @@ func hashBlock(seq, number uint64, parent Hash, txs []Tx) Hash {
 func writeBytes(h io.Writer, b []byte) {
 	writeUint64(h, uint64(len(b)))
 	h.Write(b)
+}
+
+// writeValue digests a *big.Int with an explicit sign/nil tag, so nil, 0, +n
+// and -n all hash distinctly (big.Int.Bytes() drops the sign and encodes nil
+// and 0 identically).
+func writeValue(h io.Writer, v *big.Int) {
+	switch {
+	case v == nil:
+		h.Write([]byte{0})
+		return
+	case v.Sign() < 0:
+		h.Write([]byte{1})
+	case v.Sign() == 0:
+		h.Write([]byte{2})
+	default:
+		h.Write([]byte{3})
+	}
+	writeBytes(h, v.Bytes())
 }
 
 func writeUint64(h io.Writer, v uint64) {

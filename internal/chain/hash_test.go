@@ -7,6 +7,27 @@ import (
 
 // --- hashTx ---
 
+// nil, 0, +n and -n Values must hash distinctly, since big.Int.Bytes() alone
+// drops the sign and encodes nil and 0 identically.
+func TestHashTxDistinguishesValueSignAndNil(t *testing.T) {
+	tx := func(v *big.Int) Tx {
+		return Tx{ID: "a", From: addr("x"), To: addr("y"), Value: v}
+	}
+	variants := map[string]Hash{
+		"nil":  hashTx(tx(nil)),
+		"zero": hashTx(tx(big.NewInt(0))),
+		"pos":  hashTx(tx(big.NewInt(100))),
+		"neg":  hashTx(tx(big.NewInt(-100))),
+	}
+	seen := map[Hash]string{}
+	for name, h := range variants {
+		if other, dup := seen[h]; dup {
+			t.Errorf("%s and %s hash identically", name, other)
+		}
+		seen[h] = name
+	}
+}
+
 func TestHashTxIsDeterministic(t *testing.T) {
 	tx := Tx{ID: "a", From: addr("alice"), To: addr("bob"), Value: big.NewInt(100)}
 	if hashTx(tx) != hashTx(tx) {
