@@ -1,34 +1,26 @@
 package chain
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestGenesisSnapshot(t *testing.T) {
-	d := NewDriver(1)
-	s := d.Snapshot()
+	s := NewDriver(1).Snapshot()
 
-	if s.Height() != 0 {
-		t.Fatalf("genesis height = %d, want 0", s.Height())
-	}
-	if s.Head() == nil {
-		t.Fatal("genesis head is nil")
-	}
-	if s.Head().Number != 0 {
-		t.Fatalf("genesis block number = %d, want 0", s.Head().Number)
-	}
-	if s.Finalized() != 0 {
-		t.Fatalf("genesis finalized = %d, want 0", s.Finalized())
-	}
+	assert.Equal(t, uint64(0), s.Height())
+	require.NotNil(t, s.Head(), "genesis head is nil")
+	assert.Equal(t, uint64(0), s.Head().Number)
+	assert.Equal(t, uint64(0), s.Finalized())
 }
 
 func TestByNumberAndByHashReturnNilWhenAbsent(t *testing.T) {
 	s := NewDriver(1).Snapshot()
 
-	if s.ByNumber(99) != nil {
-		t.Error("ByNumber of a nonexistent height should be nil")
-	}
-	if s.ByHash(Hash{}) != nil {
-		t.Error("ByHash of an unknown hash should be nil")
-	}
+	assert.Nil(t, s.ByNumber(99), "ByNumber of a nonexistent height should be nil")
+	assert.Nil(t, s.ByHash(Hash{}), "ByHash of an unknown hash should be nil")
 }
 
 func TestByNumberAndByHashFindCanonicalBlocks(t *testing.T) {
@@ -47,12 +39,9 @@ func TestByNumberAndByHashFindCanonicalBlocks(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			byNum := s.ByNumber(c.want.Number)
-			if byNum == nil || byNum.Hash != c.want.Hash {
-				t.Fatalf("ByNumber(%d) did not return the expected block", c.want.Number)
-			}
-			if s.ByHash(c.want.Hash) == nil {
-				t.Fatalf("ByHash(%x) returned nil", c.want.Hash)
-			}
+			require.NotNil(t, byNum)
+			assert.Equal(t, c.want.Hash, byNum.Hash)
+			assert.NotNil(t, s.ByHash(c.want.Hash))
 		})
 	}
 }
@@ -63,12 +52,8 @@ func TestReceiptOfCanonicalTx(t *testing.T) {
 	txHash := blk.Receipts[0].TxHash
 
 	r := d.Snapshot().ReceiptOf(txHash)
-	if r == nil {
-		t.Fatal("ReceiptOf a tx in a canonical block returned nil")
-	}
-	if r.TxHash != txHash {
-		t.Errorf("receipt.TxHash = %x, want %x", r.TxHash, txHash)
-	}
+	require.NotNil(t, r, "ReceiptOf a tx in a canonical block returned nil")
+	assert.Equal(t, txHash, r.TxHash)
 }
 
 // A snapshot is an immutable point-in-time view: mutating the chain afterwards
@@ -83,10 +68,6 @@ func TestSnapshotIsImmutable(t *testing.T) {
 
 	d.ProduceBlock(nil) // advance the chain after taking the snapshot
 
-	if snap.Height() != heightBefore {
-		t.Errorf("snapshot height changed: %d -> %d", heightBefore, snap.Height())
-	}
-	if snap.Head().Hash != headBefore {
-		t.Error("snapshot head changed after a later ProduceBlock")
-	}
+	assert.Equal(t, heightBefore, snap.Height(), "snapshot height changed after a later ProduceBlock")
+	assert.Equal(t, headBefore, snap.Head().Hash, "snapshot head changed after a later ProduceBlock")
 }
