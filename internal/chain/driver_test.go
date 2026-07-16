@@ -111,21 +111,23 @@ func TestReorgBranchTxIsQueryable(t *testing.T) {
 // reorgs. ReceiptOf must reflect the *current* canonical state each time.
 func TestReorgReincludesOrphanedTx(t *testing.T) {
 	d := NewDriver(1)
-	produceEmpty(d, 2)                   // heights 1,2
-	d.ProduceBlock([]Tx{deposit("dep")}) // height 3 carries the deposit
-	produceEmpty(d, 1)                   // height 4
-	dep := hashTx(deposit("dep"))
+	dep := deposit("dep")
+	depHash := hashTx(dep)
 
-	require.NotNil(t, d.Snapshot().ReceiptOf(dep), "deposit should start canonical")
+	produceEmpty(d, 2)        // heights 1,2
+	d.ProduceBlock([]Tx{dep}) // height 3 carries the deposit
+	produceEmpty(d, 1)        // height 4
+
+	require.NotNil(t, d.Snapshot().ReceiptOf(depHash), "deposit should start canonical")
 
 	// Reorg #1: fork at 2 with 3 empty blocks (new head 5 > 4) -> orphans the deposit.
 	require.NoError(t, d.Reorg(2, make([][]Tx, 3)))
-	assert.Nil(t, d.Snapshot().ReceiptOf(dep), "deposit should be orphaned after reorg #1")
+	assert.Nil(t, d.Snapshot().ReceiptOf(depHash), "deposit should be orphaned after reorg #1")
 
 	// Reorg #2: fork at 1 with 6 blocks (new head 7 > 5), re-including the deposit.
-	reinclude := [][]Tx{nil, {deposit("dep")}, nil, nil, nil, nil}
+	reinclude := [][]Tx{nil, {dep}, nil, nil, nil, nil}
 	require.NoError(t, d.Reorg(1, reinclude))
-	assert.NotNil(t, d.Snapshot().ReceiptOf(dep), "deposit should be canonical again after reorg #2")
+	assert.NotNil(t, d.Snapshot().ReceiptOf(depHash), "deposit should be canonical again after reorg #2")
 }
 
 // --- Driver: finality ---
@@ -134,7 +136,11 @@ func TestFinalize(t *testing.T) {
 	d := NewDriver(1)
 	produceEmpty(d, 6) // height 6
 
-	// Happy path: finalizing a height within (finalized, head] succeeds.
+	// Happy path: finalizing a height within [finalized, head] succeeds.
+	require.NoError(t, d.Finalize(4))
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized())
+
+	// Re-finalizing the current finalized height is allowed (idempotent boundary).
 	require.NoError(t, d.Finalize(4))
 	assert.Equal(t, uint64(4), d.Snapshot().Finalized())
 
@@ -153,30 +159,34 @@ func TestFinalize(t *testing.T) {
 // Every rejection path must fail with a specific error and leave the chain
 // completely unchanged.
 func TestReorgRejects(t *testing.T) {
+	u64 := func(v uint64) *uint64 { return &v }
 	cases := []struct {
 		name      string
-		height    int    // blocks to produce before the reorg
-		finalize  uint64 // 0 = skip finalize
+		height    int     // blocks to produce before the reorg
+		finalize  *uint64 // nil = skip finalize
 		forkFrom  uint64
 		branchLen int
 		wantErr   error
 	}{
-		{"below finalized", 6, 4, 3, 5, ErrReorgBelowFinalized},
-		{"does not outgrow head", 6, 0, 4, 1, ErrReorgTooShort},
-		{"fork point above head", 3, 0, 5, 4, ErrForkPointNotFound},
+		{"below finalized", 6, u64(4), 3, 5, ErrReorgBelowFinalized},
+		{"does not outgrow head", 6, nil, 4, 1, ErrReorgTooShort},
+		{"ties with head", 6, nil, 4, 2, ErrReorgTooShort},
+		{"fork point above head", 3, nil, 5, 4, ErrForkPointNotFound},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			d := NewDriver(1)
 			produceEmpty(d, c.height)
-			if c.finalize > 0 {
-				require.NoError(t, d.Finalize(c.finalize))
+			if c.finalize != nil {
+				require.NoError(t, d.Finalize(*c.finalize))
 			}
-			before := d.Snapshot().Head().Hash
+			before := d.Snapshot()
 
 			err := d.Reorg(c.forkFrom, make([][]Tx, c.branchLen))
 			require.ErrorIs(t, err, c.wantErr)
-			assert.Equal(t, before, d.Snapshot().Head().Hash, "chain must be unchanged after a rejected reorg")
+			after := d.Snapshot()
+			assert.Equal(t, before.Head().Hash, after.Head().Hash, "head must be unchanged after a rejected reorg")
+			assert.Equal(t, before.Finalized(), after.Finalized(), "finalized must be unchanged after a rejected reorg")
 		})
 	}
 }
