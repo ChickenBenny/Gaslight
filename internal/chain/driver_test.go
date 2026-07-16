@@ -87,45 +87,98 @@ func TestReorgReplacesCanonicalAndOrphansDeposit(t *testing.T) {
 	// engine must react to (reverse the credited balance).
 	assert.Nil(t, after.ReceiptOf(depTx), "orphaned deposit receipt must be nil after reorg")
 }
-	if after.Height() != 9 {
-		t.Fatalf("post-reorg height = %d, want 9", after.Height())
-	}
-	// Height 5 is now a different block on the winning branch.
-	if after.ByNumber(5).Hash == oldH5 {
-		t.Error("ByNumber(5) still returns the orphaned block after reorg")
-	}
-	// The orphaned block leaves canonical but stays reachable by hash —
-	// reorg-aware clients rely on this to reconcile their view.
-	if after.ByHash(oldH5) == nil {
-		t.Error("orphaned block should still be findable by hash")
-	}
-	// The killer assertion: the deposit's receipt is gone. This is the signal a
-	// deposit engine must react to (reverse the credited balance).
-	if after.ReceiptOf(depTx) != nil {
-		t.Error("orphaned deposit receipt must be nil after reorg")
-	}
+
+// A reorg branch can also *introduce* txs. A tx that arrives via the winning
+// branch is canonical, so its receipt must be queryable — not nil (which would
+// make it indistinguishable from an orphaned tx).
+func TestReorgBranchTxIsQueryable(t *testing.T) {
+	d := NewDriver(1)
+	produceEmpty(d, 3) // canonical height 3 (empty blocks)
+
+	dep := deposit("reorg-dep")
+
+	// Fork at height 1, lay down 4 blocks; the deposit rides in the 2nd new
+	// block (height 3). New head height = 1 + 4 = 5 > 3, so the branch wins.
+	branch := [][]Tx{nil, {dep}, nil, nil}
+	require.NoError(t, d.Reorg(1, branch))
+
+	r := d.Snapshot().ReceiptOf(hashTx(dep))
+	require.NotNil(t, r, "receipt for a tx introduced by the reorg branch should not be nil")
+	assert.Equal(t, hashTx(dep), r.TxHash)
 }
 
-func TestReorgBelowFinalizedIsRejected(t *testing.T) {
+// A tx can go canonical -> orphaned -> canonical again across consecutive
+// reorgs. ReceiptOf must reflect the *current* canonical state each time.
+func TestReorgReincludesOrphanedTx(t *testing.T) {
+	d := NewDriver(1)
+	produceEmpty(d, 2)                   // heights 1,2
+	d.ProduceBlock([]Tx{deposit("dep")}) // height 3 carries the deposit
+	produceEmpty(d, 1)                   // height 4
+	dep := hashTx(deposit("dep"))
+
+	require.NotNil(t, d.Snapshot().ReceiptOf(dep), "deposit should start canonical")
+
+	// Reorg #1: fork at 2 with 3 empty blocks (new head 5 > 4) -> orphans the deposit.
+	require.NoError(t, d.Reorg(2, make([][]Tx, 3)))
+	assert.Nil(t, d.Snapshot().ReceiptOf(dep), "deposit should be orphaned after reorg #1")
+
+	// Reorg #2: fork at 1 with 6 blocks (new head 7 > 5), re-including the deposit.
+	reinclude := [][]Tx{nil, {deposit("dep")}, nil, nil, nil, nil}
+	require.NoError(t, d.Reorg(1, reinclude))
+	assert.NotNil(t, d.Snapshot().ReceiptOf(dep), "deposit should be canonical again after reorg #2")
+}
+
+// --- Driver: finality ---
+
+func TestFinalize(t *testing.T) {
 	d := NewDriver(1)
 	produceEmpty(d, 6) // height 6
+
+	// Happy path: finalizing a height within (finalized, head] succeeds.
 	require.NoError(t, d.Finalize(4))
-	before := d.Snapshot().Head().Hash
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized())
 
-	// Forking from height 3 would rewrite finalized block 4 — must be rejected.
-	err := d.Reorg(3, make([][]Tx, 5))
-	require.ErrorIs(t, err, ErrReorgBelowFinalized)
-	assert.Equal(t, before, d.Snapshot().Head().Hash, "chain must be unchanged after a rejected reorg")
+	// Cannot finalize a block that does not exist yet.
+	require.ErrorIs(t, d.Finalize(10), ErrHeightTooHigh)
+
+	// The finalized watermark only moves forward, never backward.
+	require.ErrorIs(t, d.Finalize(3), ErrHeightTooLow)
+
+	// Rejected calls must leave the watermark untouched.
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized(), "finalized must be unchanged after rejected calls")
 }
 
-func TestReorgThatDoesNotWinIsRejected(t *testing.T) {
-	d := NewDriver(1)
-	produceEmpty(d, 6) // height 6
+// --- Driver: reorg rejection (table-driven) ---
 
-	// Fork from 4 with a single block -> new head would be height 5 < 6.
-	// A reorg only takes effect if the new branch is longer.
-	err := d.Reorg(4, make([][]Tx, 1))
-	require.ErrorIs(t, err, ErrReorgTooShort)
+// Every rejection path must fail with a specific error and leave the chain
+// completely unchanged.
+func TestReorgRejects(t *testing.T) {
+	cases := []struct {
+		name      string
+		height    int    // blocks to produce before the reorg
+		finalize  uint64 // 0 = skip finalize
+		forkFrom  uint64
+		branchLen int
+		wantErr   error
+	}{
+		{"below finalized", 6, 4, 3, 5, ErrReorgBelowFinalized},
+		{"does not outgrow head", 6, 0, 4, 1, ErrReorgTooShort},
+		{"fork point above head", 3, 0, 5, 4, ErrForkPointNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := NewDriver(1)
+			produceEmpty(d, c.height)
+			if c.finalize > 0 {
+				require.NoError(t, d.Finalize(c.finalize))
+			}
+			before := d.Snapshot().Head().Hash
+
+			err := d.Reorg(c.forkFrom, make([][]Tx, c.branchLen))
+			require.ErrorIs(t, err, c.wantErr)
+			assert.Equal(t, before, d.Snapshot().Head().Hash, "chain must be unchanged after a rejected reorg")
+		})
+	}
 }
 
 // --- Determinism: the moat. Same call sequence -> identical hashes. ---

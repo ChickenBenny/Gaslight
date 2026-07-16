@@ -3,6 +3,8 @@ package chain
 import (
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Concurrent writers are serialized by Driver.mu, so no block is lost to a
@@ -26,7 +28,6 @@ func TestProduceBlockConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := d.Snapshot().Height(); got != goroutines*perGoroutine {
-		t.Fatalf("height = %d, want %d — blocks lost to unsynchronized writers", got, goroutines*perGoroutine)
-	}
+	assert.Equal(t, uint64(goroutines*perGoroutine), d.Snapshot().Height(),
+		"blocks lost to unsynchronized writers")
 }
