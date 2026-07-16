@@ -3,6 +3,8 @@ package chain
 import (
 	"math/big"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // --- hashTx ---
@@ -21,18 +23,15 @@ func TestHashTxDistinguishesValueSignAndNil(t *testing.T) {
 	}
 	seen := map[Hash]string{}
 	for name, h := range variants {
-		if other, dup := seen[h]; dup {
-			t.Errorf("%s and %s hash identically", name, other)
-		}
+		other, dup := seen[h]
+		assert.Falsef(t, dup, "%s and %s hash identically", name, other)
 		seen[h] = name
 	}
 }
 
 func TestHashTxIsDeterministic(t *testing.T) {
 	tx := Tx{ID: "a", From: addr("alice"), To: addr("bob"), Value: big.NewInt(100)}
-	if hashTx(tx) != hashTx(tx) {
-		t.Fatal("hashTx is not deterministic: same tx produced different hashes")
-	}
+	assert.Equal(t, hashTx(tx), hashTx(tx), "hashTx should be deterministic")
 }
 
 // Changing any field must change the hash — otherwise that field isn't being
@@ -49,9 +48,7 @@ func TestHashTxDependsOnEveryField(t *testing.T) {
 	}
 	for name, v := range variants {
 		t.Run(name, func(t *testing.T) {
-			if hashTx(v) == baseHash {
-				t.Errorf("%s did not change the tx hash — is that field mixed into hashTx?", name)
-			}
+			assert.NotEqual(t, baseHash, hashTx(v), "this field should be mixed into hashTx")
 		})
 	}
 }
@@ -61,9 +58,7 @@ func TestHashTxDependsOnEveryField(t *testing.T) {
 func TestHashBlockIsDeterministic(t *testing.T) {
 	txs := []Tx{deposit("d1")}
 	parent := Hash{1, 2, 3}
-	if hashBlock(7, 5, parent, txs) != hashBlock(7, 5, parent, txs) {
-		t.Fatal("hashBlock is not deterministic")
-	}
+	assert.Equal(t, hashBlock(7, 5, parent, txs), hashBlock(7, 5, parent, txs))
 }
 
 func TestHashBlockDependsOnEveryInput(t *testing.T) {
@@ -88,9 +83,7 @@ func TestHashBlockDependsOnEveryInput(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if c.got == base {
-				t.Errorf("%s did not change the block hash", c.name)
-			}
+			assert.NotEqual(t, base, c.got, "this input should change the block hash")
 		})
 	}
 }
@@ -99,7 +92,8 @@ func TestHashBlockDependsOnEveryInput(t *testing.T) {
 func TestHashBlockIsOrderSensitive(t *testing.T) {
 	a, b := deposit("a"), deposit("b")
 	parent := Hash{1}
-	if hashBlock(1, 1, parent, []Tx{a, b}) == hashBlock(1, 1, parent, []Tx{b, a}) {
-		t.Error("hashBlock should depend on tx order")
-	}
+	assert.NotEqual(t,
+		hashBlock(1, 1, parent, []Tx{a, b}),
+		hashBlock(1, 1, parent, []Tx{b, a}),
+		"hashBlock should depend on tx order")
 }

@@ -3,6 +3,9 @@ package chain
 import (
 	"math/big"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- shared test helpers ---
@@ -41,26 +44,17 @@ func TestProduceBlockAppendsAndChains(t *testing.T) {
 	b2 := d.ProduceBlock(nil)
 
 	s := d.Snapshot()
-	if s.Height() != 2 {
-		t.Fatalf("height = %d, want 2", s.Height())
-	}
-	if b1.Number != 1 || b2.Number != 2 {
-		t.Fatalf("block numbers = %d,%d, want 1,2", b1.Number, b2.Number)
-	}
-	// Each block must point at its parent — this chain is what lets a client
-	// detect a reorg (a new head whose ParentHash it has never seen).
-	if b1.ParentHash != genesis.Hash {
-		t.Error("b1.ParentHash does not point at genesis")
-	}
-	if b2.ParentHash != b1.Hash {
-		t.Error("b2.ParentHash does not point at b1")
-	}
-	if s.Head().Hash != b2.Hash {
-		t.Error("head is not the latest block")
-	}
-	if got := s.ByNumber(2); got == nil || got.Hash != b2.Hash {
-		t.Error("ByNumber(2) did not return b2")
-	}
+	assert.Equal(t, uint64(2), s.Height())
+	assert.Equal(t, uint64(1), b1.Number)
+	assert.Equal(t, uint64(2), b2.Number)
+	// Parent chaining is what lets a client detect a reorg (a new head whose
+	// ParentHash it has never seen).
+	assert.Equal(t, genesis.Hash, b1.ParentHash, "b1 should point at genesis")
+	assert.Equal(t, b1.Hash, b2.ParentHash, "b2 should point at b1")
+	assert.Equal(t, b2.Hash, s.Head().Hash, "head should be the latest block")
+
+	require.NotNil(t, s.ByNumber(2))
+	assert.Equal(t, b2.Hash, s.ByNumber(2).Hash)
 }
 
 // --- Driver: reorg (the flagship behaviour) ---
@@ -72,70 +66,128 @@ func TestReorgReplacesCanonicalAndOrphansDeposit(t *testing.T) {
 	produceEmpty(d, 4) // heights 1..4
 
 	depBlk := d.ProduceBlock([]Tx{deposit("alice-deposit")}) // height 5
-	depTx := depBlk.Receipts[0].TxHash                       // ProduceBlock computes a receipt per tx
+	depTx := depBlk.Receipts[0].TxHash
 
 	produceEmpty(d, 3) // heights 6,7,8 -> deposit now has 3 confirmations
 
 	before := d.Snapshot()
-	if before.Height() != 8 {
-		t.Fatalf("pre-reorg height = %d, want 8", before.Height())
-	}
-	if before.ReceiptOf(depTx) == nil {
-		t.Fatal("deposit receipt should exist before the reorg")
-	}
+	require.Equal(t, uint64(8), before.Height())
+	require.NotNil(t, before.ReceiptOf(depTx), "deposit receipt should exist before the reorg")
 	oldH5 := before.ByNumber(5).Hash
 
 	// Fork from height 4 and lay down 5 empty blocks (5'..9'). New head is
-	// height 9 > 8, so this branch wins. None of the new blocks contain the deposit.
-	if err := d.Reorg(4, make([][]Tx, 5)); err != nil {
-		t.Fatalf("Reorg returned error: %v", err)
-	}
+	// height 9 > 8, so this branch wins; none of the new blocks contain the deposit.
+	require.NoError(t, d.Reorg(4, make([][]Tx, 5)))
 
 	after := d.Snapshot()
-	if after.Height() != 9 {
-		t.Fatalf("post-reorg height = %d, want 9", after.Height())
-	}
-	// Height 5 is now a different block on the winning branch.
-	if after.ByNumber(5).Hash == oldH5 {
-		t.Error("ByNumber(5) still returns the orphaned block after reorg")
-	}
-	// The orphaned block leaves canonical but stays reachable by hash —
-	// reorg-aware clients rely on this to reconcile their view.
-	if after.ByHash(oldH5) == nil {
-		t.Error("orphaned block should still be findable by hash")
-	}
-	// The killer assertion: the deposit's receipt is gone. This is the signal a
-	// deposit engine must react to (reverse the credited balance).
-	if after.ReceiptOf(depTx) != nil {
-		t.Error("orphaned deposit receipt must be nil after reorg")
-	}
+	assert.Equal(t, uint64(9), after.Height())
+	assert.NotEqual(t, oldH5, after.ByNumber(5).Hash, "height 5 should be a new block after reorg")
+	assert.NotNil(t, after.ByHash(oldH5), "orphaned block should still be findable by hash")
+	// The killer assertion: the deposit's receipt is gone — the signal a deposit
+	// engine must react to (reverse the credited balance).
+	assert.Nil(t, after.ReceiptOf(depTx), "orphaned deposit receipt must be nil after reorg")
 }
 
-func TestReorgBelowFinalizedIsRejected(t *testing.T) {
+// A reorg branch can also *introduce* txs. A tx that arrives via the winning
+// branch is canonical, so its receipt must be queryable — not nil (which would
+// make it indistinguishable from an orphaned tx).
+func TestReorgBranchTxIsQueryable(t *testing.T) {
 	d := NewDriver(1)
-	produceEmpty(d, 6) // height 6
-	if err := d.Finalize(4); err != nil {
-		t.Fatalf("Finalize returned error: %v", err)
-	}
-	before := d.Snapshot().Head().Hash
+	produceEmpty(d, 3) // canonical height 3 (empty blocks)
 
-	// Forking from height 3 would rewrite finalized block 4 — must be rejected.
-	if err := d.Reorg(3, make([][]Tx, 5)); err == nil {
-		t.Fatal("Reorg below finalized height should return an error")
-	}
-	if d.Snapshot().Head().Hash != before {
-		t.Fatal("chain must be unchanged after a rejected reorg")
-	}
+	dep := deposit("reorg-dep")
+
+	// Fork at height 1, lay down 4 blocks; the deposit rides in the 2nd new
+	// block (height 3). New head height = 1 + 4 = 5 > 3, so the branch wins.
+	branch := [][]Tx{nil, {dep}, nil, nil}
+	require.NoError(t, d.Reorg(1, branch))
+
+	r := d.Snapshot().ReceiptOf(hashTx(dep))
+	require.NotNil(t, r, "receipt for a tx introduced by the reorg branch should not be nil")
+	assert.Equal(t, hashTx(dep), r.TxHash)
 }
 
-func TestReorgThatDoesNotWinIsRejected(t *testing.T) {
+// A tx can go canonical -> orphaned -> canonical again across consecutive
+// reorgs. ReceiptOf must reflect the *current* canonical state each time.
+func TestReorgReincludesOrphanedTx(t *testing.T) {
+	d := NewDriver(1)
+	dep := deposit("dep")
+	depHash := hashTx(dep)
+
+	produceEmpty(d, 2)        // heights 1,2
+	d.ProduceBlock([]Tx{dep}) // height 3 carries the deposit
+	produceEmpty(d, 1)        // height 4
+
+	require.NotNil(t, d.Snapshot().ReceiptOf(depHash), "deposit should start canonical")
+
+	// Reorg #1: fork at 2 with 3 empty blocks (new head 5 > 4) -> orphans the deposit.
+	require.NoError(t, d.Reorg(2, make([][]Tx, 3)))
+	assert.Nil(t, d.Snapshot().ReceiptOf(depHash), "deposit should be orphaned after reorg #1")
+
+	// Reorg #2: fork at 1 with 6 blocks (new head 7 > 5), re-including the deposit.
+	reinclude := [][]Tx{nil, {dep}, nil, nil, nil, nil}
+	require.NoError(t, d.Reorg(1, reinclude))
+	assert.NotNil(t, d.Snapshot().ReceiptOf(depHash), "deposit should be canonical again after reorg #2")
+}
+
+// --- Driver: finality ---
+
+func TestFinalize(t *testing.T) {
 	d := NewDriver(1)
 	produceEmpty(d, 6) // height 6
 
-	// Fork from 4 with a single block -> new head would be height 5 < 6.
-	// A reorg only takes effect if the new branch is longer.
-	if err := d.Reorg(4, make([][]Tx, 1)); err == nil {
-		t.Fatal("a branch that does not outgrow the current head should be rejected")
+	// Happy path: finalizing a height within [finalized, head] succeeds.
+	require.NoError(t, d.Finalize(4))
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized())
+
+	// Re-finalizing the current finalized height is allowed (idempotent boundary).
+	require.NoError(t, d.Finalize(4))
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized())
+
+	// Cannot finalize a block that does not exist yet.
+	require.ErrorIs(t, d.Finalize(10), ErrHeightTooHigh)
+
+	// The finalized watermark only moves forward, never backward.
+	require.ErrorIs(t, d.Finalize(3), ErrHeightTooLow)
+
+	// Rejected calls must leave the watermark untouched.
+	assert.Equal(t, uint64(4), d.Snapshot().Finalized(), "finalized must be unchanged after rejected calls")
+}
+
+// --- Driver: reorg rejection (table-driven) ---
+
+// Every rejection path must fail with a specific error and leave the chain
+// completely unchanged.
+func TestReorgRejects(t *testing.T) {
+	u64 := func(v uint64) *uint64 { return &v }
+	cases := []struct {
+		name      string
+		height    int     // blocks to produce before the reorg
+		finalize  *uint64 // nil = skip finalize
+		forkFrom  uint64
+		branchLen int
+		wantErr   error
+	}{
+		{"below finalized", 6, u64(4), 3, 5, ErrReorgBelowFinalized},
+		{"does not outgrow head", 6, nil, 4, 1, ErrReorgTooShort},
+		{"ties with head", 6, nil, 4, 2, ErrReorgTooShort},
+		{"fork point above head", 3, nil, 5, 4, ErrForkPointNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := NewDriver(1)
+			produceEmpty(d, c.height)
+			if c.finalize != nil {
+				require.NoError(t, d.Finalize(*c.finalize))
+			}
+			before := d.Snapshot()
+
+			err := d.Reorg(c.forkFrom, make([][]Tx, c.branchLen))
+			require.ErrorIs(t, err, c.wantErr)
+			after := d.Snapshot()
+			assert.Equal(t, before.Head().Hash, after.Head().Hash, "head must be unchanged after a rejected reorg")
+			assert.Equal(t, before.Finalized(), after.Finalized(), "finalized must be unchanged after a rejected reorg")
+		})
 	}
 }
 
@@ -147,12 +199,8 @@ func TestSameSequenceProducesIdenticalHead(t *testing.T) {
 		produceEmpty(d, 4)
 		d.ProduceBlock([]Tx{deposit("alice-deposit")})
 		produceEmpty(d, 3)
-		if err := d.Reorg(4, make([][]Tx, 5)); err != nil {
-			t.Fatalf("Reorg returned error: %v", err)
-		}
+		require.NoError(t, d.Reorg(4, make([][]Tx, 5)))
 		return d.Snapshot().Head().Hash
 	}
-	if run() != run() {
-		t.Fatal("identical call sequences must yield identical head hashes")
-	}
+	assert.Equal(t, run(), run(), "identical call sequences must yield identical head hashes")
 }
