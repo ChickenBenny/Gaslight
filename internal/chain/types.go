@@ -8,12 +8,14 @@ type Hash [32]byte
 // Address is a 20-byte account address.
 type Address [20]byte
 
-// Tx is a minimal value transfer.
+// Tx is a minimal value transfer. Hash is the tx hash, set at block production;
+// it is NOT part of the hashTx preimage (that would be circular).
 type Tx struct {
 	ID    string
 	From  Address
 	To    Address
 	Value *big.Int
+	Hash  Hash
 }
 
 // Log is an event emitted while executing a transaction.

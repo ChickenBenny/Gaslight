@@ -57,6 +57,16 @@ func TestProduceBlockAppendsAndChains(t *testing.T) {
 	assert.Equal(t, b2.Hash, s.ByNumber(2).Hash)
 }
 
+// Each tx is stamped with its hash at production, matching its receipt's TxHash.
+func TestProduceBlockStampsTxHash(t *testing.T) {
+	d := NewDriver(1)
+	blk := d.ProduceBlock([]Tx{deposit("dep")})
+
+	require.Len(t, blk.Txs, 1)
+	assert.NotEqual(t, Hash{}, blk.Txs[0].Hash, "tx hash should be set at production")
+	assert.Equal(t, blk.Receipts[0].TxHash, blk.Txs[0].Hash, "tx hash must match its receipt")
+}
+
 // --- Driver: reorg (the flagship behaviour) ---
 
 // Mirrors the reorg-eats-a-deposit scenario: a deposit is confirmed, then a
