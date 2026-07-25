@@ -2,8 +2,10 @@ package rpc
 
 import (
 	"math"
+	"strings"
 	"testing"
 
+	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -68,4 +70,51 @@ func TestUint64RoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, v, got)
 	}
+}
+
+// --- Hash / Address: "data" hex (fixed length, 0x-prefixed, leading zeros kept) ---
+
+// Unlike a quantity, a hash keeps every byte: the all-zero hash is 64 zeros,
+// not "0x0", and the output is always exactly 66 chars.
+func TestEncodeHashIsFixedLength(t *testing.T) {
+	assert.Equal(t, "0x"+strings.Repeat("0", 64), encodeHash(chain.Hash{}))
+
+	var h chain.Hash
+	h[0] = 0x12
+	h[31] = 0xff
+	assert.Equal(t, "0x12"+strings.Repeat("0", 60)+"ff", encodeHash(h))
+	assert.Len(t, encodeHash(h), 66)
+}
+
+func TestDecodeHashRoundTrip(t *testing.T) {
+	var h chain.Hash
+	h[0] = 0xab
+	h[15] = 0xcd
+	got, err := decodeHash(encodeHash(h))
+	require.NoError(t, err)
+	assert.Equal(t, h, got)
+}
+
+func TestDecodeHashRejects(t *testing.T) {
+	cases := []string{
+		"",                             // empty
+		strings.Repeat("a", 64),        // 64 hex chars but no 0x prefix
+		"0x1234",                       // too short
+		"0x" + strings.Repeat("g", 64), // right length but non-hex
+		"0x" + strings.Repeat("0", 63), // wrong length
+	}
+	for _, s := range cases {
+		_, err := decodeHash(s)
+		assert.Errorf(t, err, "decodeHash(%q) should error", s)
+	}
+}
+
+func TestEncodeAddressIsFixedLength(t *testing.T) {
+	assert.Equal(t, "0x"+strings.Repeat("0", 40), encodeAddress(chain.Address{}))
+
+	var a chain.Address
+	a[0] = 0xde
+	a[19] = 0xad
+	assert.Equal(t, "0xde"+strings.Repeat("0", 36)+"ad", encodeAddress(a))
+	assert.Len(t, encodeAddress(a), 42)
 }
