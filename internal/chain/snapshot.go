@@ -34,7 +34,6 @@ func (s *ChainSnapshot) ByNumber(n uint64) *Block {
 	if n >= uint64(len(s.canonical)) {
 		return nil
 	}
-
 	return s.blocks[s.canonical[n]]
 }
 

@@ -119,3 +119,89 @@ func TestServeBatch(t *testing.T) {
 	assert.Equal(t, `"0x2"`, byID["1"]) // eth_blockNumber
 	assert.Equal(t, `"0x1"`, byID["2"]) // eth_chainId
 }
+
+// --- eth_getBlockByNumber ---
+
+type wireBlock struct {
+	Number       string   `json:"number"`
+	Hash         string   `json:"hash"`
+	ParentHash   string   `json:"parentHash"`
+	Timestamp    string   `json:"timestamp"`
+	Transactions []string `json:"transactions"`
+}
+
+// getBlock calls eth_getBlockByNumber(param, false) and returns the response.
+func getBlock(t *testing.T, h *Handler, param string) testResp {
+	t.Helper()
+	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":[` + param + `,false]}`
+	return decodeResp(t, h.ServeRPC([]byte(req)))
+}
+
+func TestServeGetBlockByNumberLatest(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 3; i++ {
+		d.ProduceBlock(nil)
+	}
+	r := getBlock(t, h, `"latest"`)
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	assert.Equal(t, "0x3", b.Number)
+}
+
+func TestServeGetBlockByNumberByHex(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 5; i++ {
+		d.ProduceBlock(nil)
+	}
+	r := getBlock(t, h, `"0x2"`)
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	assert.Equal(t, "0x2", b.Number)
+}
+
+func TestServeGetBlockByNumberFinalized(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 6; i++ {
+		d.ProduceBlock(nil)
+	}
+	require.NoError(t, d.Finalize(4))
+
+	r := getBlock(t, h, `"finalized"`)
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	assert.Equal(t, "0x4", b.Number)
+}
+
+// A height above the head returns a null result, not an error.
+func TestServeGetBlockByNumberNotFound(t *testing.T) {
+	h, _ := newHandler(1) // genesis only, height 0
+	r := getBlock(t, h, `"0x63"`)
+	require.Nil(t, r.Error)
+	assert.Equal(t, "null", string(r.Result))
+}
+
+func TestServeGetBlockByNumberBadTag(t *testing.T) {
+	h, _ := newHandler(1)
+	r := getBlock(t, h, `"banana"`)
+	require.NotNil(t, r.Error)
+	assert.Equal(t, -32602, r.Error.Code)
+}
+
+func TestServeGetBlockByNumberIncludesTxHashes(t *testing.T) {
+	h, d := newHandler(1)
+	blk := d.ProduceBlock([]chain.Tx{{ID: "a"}}) // height 1, one tx
+
+	r := getBlock(t, h, `"0x1"`)
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	require.Len(t, b.Transactions, 1)
+	assert.Equal(t, encodeHash(blk.Txs[0].Hash), b.Transactions[0])
+}

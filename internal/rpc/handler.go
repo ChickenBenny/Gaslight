@@ -3,7 +3,6 @@ package rpc
 import (
 	"bytes"
 	"encoding/json"
-	"strconv"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
 )
@@ -37,9 +36,10 @@ type RPCResponse struct {
 func New(src SnapshotSource, chainID uint64) *Handler {
 	h := &Handler{src: src, chainID: chainID}
 	h.methods = map[string]methodFunc{
-		"eth_blockNumber": h.ethBlockNumber,
-		"eth_chainId":     h.ethChainID,
-		"net_version":     h.netVersion,
+		"eth_blockNumber":      h.ethBlockNumber,
+		"eth_chainId":          h.ethChainID,
+		"net_version":          h.netVersion,
+		"eth_getBlockByNumber": h.ethGetBlockByNumber,
 	}
 	return h
 }
@@ -86,18 +86,6 @@ func (h *Handler) serveSingle(snapshot *chain.ChainSnapshot, raw []byte) RPCResp
 		return RPCResponse{JSONRPC: "2.0", ID: req.ID, Error: errInternal()}
 	}
 	return RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: encodedResult}
-}
-
-func (h *Handler) ethBlockNumber(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
-	return encodeUint64(s.Height()), nil
-}
-
-func (h *Handler) ethChainID(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
-	return encodeUint64(h.chainID), nil
-}
-
-func (h *Handler) netVersion(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
-	return strconv.FormatUint(h.chainID, 10), nil
 }
 
 func mustMarshal(v any) []byte {
