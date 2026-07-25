@@ -205,3 +205,64 @@ func TestServeGetBlockByNumberIncludesTxHashes(t *testing.T) {
 	require.Len(t, b.Transactions, 1)
 	assert.Equal(t, encodeHash(blk.Txs[0].Hash), b.Transactions[0])
 }
+
+// --- eth_getBlockByHash ---
+
+func getBlockByHash(t *testing.T, h *Handler, hashHex string) testResp {
+	t.Helper()
+	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByHash","params":["` + hashHex + `",false]}`
+	return decodeResp(t, h.ServeRPC([]byte(req)))
+}
+
+func TestServeGetBlockByHashFound(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 3; i++ {
+		d.ProduceBlock(nil)
+	}
+	want := d.Snapshot().ByNumber(2)
+
+	r := getBlockByHash(t, h, encodeHash(want.Hash))
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	assert.Equal(t, "0x2", b.Number)
+	assert.Equal(t, encodeHash(want.Hash), b.Hash)
+}
+
+// ByHash still retrieves a block after it has been orphaned by a reorg — this
+// is how a reorg-aware client detects that a block it recorded is no longer
+// canonical (getBlockByNumber at that height now returns a different block).
+func TestServeGetBlockByHashReturnsOrphan(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 3; i++ {
+		d.ProduceBlock(nil)
+	}
+	orphanHash := d.Snapshot().ByNumber(3).Hash
+
+	// Fork from height 1 with 4 blocks -> new head 5, orphaning old 2 and 3.
+	require.NoError(t, d.Reorg(1, make([][]chain.Tx, 4)))
+
+	r := getBlockByHash(t, h, encodeHash(orphanHash))
+	require.Nil(t, r.Error)
+
+	var b wireBlock
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	assert.Equal(t, encodeHash(orphanHash), b.Hash)
+	assert.Equal(t, "0x3", b.Number) // still reports its original height
+}
+
+func TestServeGetBlockByHashNotFound(t *testing.T) {
+	h, _ := newHandler(1)
+	unknown := encodeHash(chain.Hash{0x99}) // valid format, never produced
+	r := getBlockByHash(t, h, unknown)
+	require.Nil(t, r.Error)
+	assert.Equal(t, "null", string(r.Result))
+}
+
+func TestServeGetBlockByHashBadHash(t *testing.T) {
+	h, _ := newHandler(1)
+	r := getBlockByHash(t, h, "0x1234") // too short
+	require.NotNil(t, r.Error)
+	assert.Equal(t, -32602, r.Error.Code)
+}

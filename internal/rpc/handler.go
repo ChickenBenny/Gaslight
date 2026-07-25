@@ -40,6 +40,7 @@ func New(src SnapshotSource, chainID uint64) *Handler {
 		"eth_chainId":          h.ethChainID,
 		"net_version":          h.netVersion,
 		"eth_getBlockByNumber": h.ethGetBlockByNumber,
+		"eth_getBlockByHash":   h.ethGetBlockByHash,
 	}
 	return h
 }

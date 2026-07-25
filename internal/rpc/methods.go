@@ -38,6 +38,25 @@ func (h *Handler) ethGetBlockByNumber(s *chain.ChainSnapshot, params []json.RawM
 	return toRPCBlock(blk), nil
 }
 
+func (h *Handler) ethGetBlockByHash(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
+	if len(params) < 1 {
+		return nil, errInvalidParams("missing block hash")
+	}
+	var hashStr string
+	if err := json.Unmarshal(params[0], &hashStr); err != nil {
+		return nil, errInvalidParams("block hash must be a string")
+	}
+	hash, err := decodeHash(hashStr)
+	if err != nil {
+		return nil, errInvalidParams("invalid block hash")
+	}
+	blk := s.ByHash(hash)
+	if blk == nil {
+		return nil, nil // JSON null
+	}
+	return toRPCBlock(blk), nil
+}
+
 func resolveHeight(s *chain.ChainSnapshot, tag string) (uint64, error) {
 	switch tag {
 	case "latest", "pending":
