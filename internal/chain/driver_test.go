@@ -67,6 +67,34 @@ func TestProduceBlockStampsTxHash(t *testing.T) {
 	assert.Equal(t, blk.Receipts[0].TxHash, blk.Txs[0].Hash, "tx hash must match its receipt")
 }
 
+// BlockByTx locates the canonical block containing a tx.
+func TestBlockByTx(t *testing.T) {
+	d := NewDriver(1)
+	produceEmpty(d, 2)
+	blk := d.ProduceBlock([]Tx{deposit("dep")}) // height 3
+	produceEmpty(d, 1)
+	txHash := blk.Txs[0].Hash
+
+	got := d.Snapshot().BlockByTx(txHash)
+	require.NotNil(t, got)
+	assert.Equal(t, blk.Hash, got.Hash)
+	assert.Equal(t, uint64(3), got.Number)
+
+	assert.Nil(t, d.Snapshot().BlockByTx(Hash{0x99}), "unknown tx should not be found")
+}
+
+// A tx in an orphaned block is off the canonical chain, so BlockByTx returns nil.
+func TestBlockByTxIgnoresOrphaned(t *testing.T) {
+	d := NewDriver(1)
+	produceEmpty(d, 2)
+	blk := d.ProduceBlock([]Tx{deposit("dep")}) // height 3
+	txHash := blk.Txs[0].Hash
+	require.NotNil(t, d.Snapshot().BlockByTx(txHash))
+
+	require.NoError(t, d.Reorg(2, make([][]Tx, 2))) // new head 4 > 3, orphans height 3
+	assert.Nil(t, d.Snapshot().BlockByTx(txHash), "orphaned tx should not be found")
+}
+
 // --- Driver: reorg (the flagship behaviour) ---
 
 // Mirrors the reorg-eats-a-deposit scenario: a deposit is confirmed, then a

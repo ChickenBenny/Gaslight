@@ -42,6 +42,20 @@ func (s *ChainSnapshot) ByHash(h Hash) *Block {
 	return s.blocks[h]
 }
 
+// BlockByTx returns the canonical block containing txHash, or nil if the tx is
+// not on the canonical chain (unknown or orphaned).
+func (s *ChainSnapshot) BlockByTx(txHash Hash) *Block {
+	for _, h := range s.canonical {
+		blk := s.blocks[h]
+		for i := range blk.Txs {
+			if blk.Txs[i].Hash == txHash {
+				return blk
+			}
+		}
+	}
+	return nil
+}
+
 // ReceiptOf returns the receipt of txHash if it is included in the canonical
 // chain, or nil otherwise (unknown or orphaned tx).
 func (s *ChainSnapshot) ReceiptOf(txHash Hash) *Receipt {
