@@ -266,3 +266,67 @@ func TestServeGetBlockByHashBadHash(t *testing.T) {
 	require.NotNil(t, r.Error)
 	assert.Equal(t, -32602, r.Error.Code)
 }
+
+// --- eth_getTransactionReceipt ---
+
+type wireReceipt struct {
+	TransactionHash string            `json:"transactionHash"`
+	Status          string            `json:"status"`
+	GasUsed         string            `json:"gasUsed"`
+	BlockHash       string            `json:"blockHash"`
+	BlockNumber     string            `json:"blockNumber"`
+	Logs            []json.RawMessage `json:"logs"`
+}
+
+func getReceipt(t *testing.T, h *Handler, txHashHex string) testResp {
+	t.Helper()
+	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["` + txHashHex + `"]}`
+	return decodeResp(t, h.ServeRPC([]byte(req)))
+}
+
+func TestServeGetTransactionReceiptFound(t *testing.T) {
+	h, d := newHandler(1)
+	for i := 0; i < 2; i++ {
+		d.ProduceBlock(nil)
+	}
+	blk := d.ProduceBlock([]chain.Tx{{ID: "a"}}) // height 3, one tx
+	txHash := blk.Txs[0].Hash
+
+	r := getReceipt(t, h, encodeHash(txHash))
+	require.Nil(t, r.Error)
+
+	var rc wireReceipt
+	require.NoError(t, json.Unmarshal(r.Result, &rc))
+	assert.Equal(t, encodeHash(txHash), rc.TransactionHash)
+	assert.Equal(t, "0x1", rc.Status)
+	assert.Equal(t, encodeUint64(blk.Number), rc.BlockNumber) // "0x3"
+	assert.Equal(t, encodeHash(blk.Hash), rc.BlockHash)
+	assert.NotNil(t, rc.Logs, "logs must be [] (empty array), not null")
+}
+
+func TestServeGetTransactionReceiptNotFound(t *testing.T) {
+	h, _ := newHandler(1)
+	r := getReceipt(t, h, encodeHash(chain.Hash{0x99})) // never produced
+	require.Nil(t, r.Error)
+	assert.Equal(t, "null", string(r.Result))
+}
+
+func TestServeGetTransactionReceiptBadHash(t *testing.T) {
+	h, _ := newHandler(1)
+	r := getReceipt(t, h, "0x1234") // too short
+	require.NotNil(t, r.Error)
+	assert.Equal(t, -32602, r.Error.Code)
+}
+
+// A tx orphaned by a reorg has no canonical receipt, so the result is null.
+func TestServeGetTransactionReceiptOrphaned(t *testing.T) {
+	h, d := newHandler(1)
+	blk := d.ProduceBlock([]chain.Tx{{ID: "a"}}) // height 1
+	txHash := blk.Txs[0].Hash
+
+	require.NoError(t, d.Reorg(0, make([][]chain.Tx, 2))) // new head 2 > 1, orphans height 1
+
+	r := getReceipt(t, h, encodeHash(txHash))
+	require.Nil(t, r.Error)
+	assert.Equal(t, "null", string(r.Result))
+}

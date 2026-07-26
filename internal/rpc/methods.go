@@ -57,6 +57,29 @@ func (h *Handler) ethGetBlockByHash(s *chain.ChainSnapshot, params []json.RawMes
 	return toRPCBlock(blk), nil
 }
 
+func (h *Handler) ethGetTransactionReceipt(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
+	if len(params) < 1 {
+		return nil, errInvalidParams("missing transaction hash")
+	}
+	var txHashStr string
+	if err := json.Unmarshal(params[0], &txHashStr); err != nil {
+		return nil, errInvalidParams("transaction hash must be a string")
+	}
+	txHash, err := decodeHash(txHashStr)
+	if err != nil {
+		return nil, errInvalidParams("invalid transaction hash")
+	}
+	r := s.ReceiptOf(txHash)
+	if r == nil {
+		return nil, nil // JSON null
+	}
+	blk := s.BlockByTx(txHash)
+	if blk == nil {
+		return nil, nil // JSON null
+	}
+	return toRPCReceipt(r, blk), nil
+}
+
 func resolveHeight(s *chain.ChainSnapshot, tag string) (uint64, error) {
 	switch tag {
 	case "latest", "pending":

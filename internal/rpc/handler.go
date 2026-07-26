@@ -36,11 +36,12 @@ type RPCResponse struct {
 func New(src SnapshotSource, chainID uint64) *Handler {
 	h := &Handler{src: src, chainID: chainID}
 	h.methods = map[string]methodFunc{
-		"eth_blockNumber":      h.ethBlockNumber,
-		"eth_chainId":          h.ethChainID,
-		"net_version":          h.netVersion,
-		"eth_getBlockByNumber": h.ethGetBlockByNumber,
-		"eth_getBlockByHash":   h.ethGetBlockByHash,
+		"eth_blockNumber":           h.ethBlockNumber,
+		"eth_chainId":               h.ethChainID,
+		"net_version":               h.netVersion,
+		"eth_getBlockByNumber":      h.ethGetBlockByNumber,
+		"eth_getBlockByHash":        h.ethGetBlockByHash,
+		"eth_getTransactionReceipt": h.ethGetTransactionReceipt,
 	}
 	return h
 }
