@@ -63,6 +63,10 @@ func (h *Handler) serveBatch(snapshot *chain.ChainSnapshot, raw []byte) []RPCRes
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return []RPCResponse{{JSONRPC: "2.0", ID: nil, Error: errInvalidRequest()}}
 	}
+	if len(items) == 0 {
+		// JSON-RPC 2.0: an empty batch is itself an invalid request.
+		return []RPCResponse{{JSONRPC: "2.0", ID: nil, Error: errInvalidRequest()}}
+	}
 	resps := make([]RPCResponse, len(items))
 	for i, item := range items {
 		resps[i] = h.serveSingle(snapshot, item)

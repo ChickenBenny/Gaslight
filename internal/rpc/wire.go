@@ -1,6 +1,10 @@
 package rpc
 
-import "github.com/ChickenBenny/Gaslight/internal/chain"
+import (
+	"encoding/hex"
+
+	"github.com/ChickenBenny/Gaslight/internal/chain"
+)
 
 type rpcBlock struct {
 	Number       string   `json:"number"`
@@ -26,23 +30,32 @@ type rpcLog struct {
 }
 
 func toRPCBlock(b *chain.Block) rpcBlock {
+	txHashes := make([]string, len(b.Txs))
+	for i, tx := range b.Txs {
+		txHashes[i] = encodeHash(tx.Hash)
+	}
 	return rpcBlock{
-		Number:     encodeUint64(b.Number),
-		Hash:       encodeHash(b.Hash),
-		ParentHash: encodeHash(b.ParentHash),
-		Timestamp:  encodeUint64(b.Timestamp),
-		Transactions: func() []string {
-			txHashes := make([]string, len(b.Txs))
-			for i, tx := range b.Txs {
-				txHashes[i] = encodeHash(tx.Hash)
-			}
-			return txHashes
-		}(),
+		Number:       encodeUint64(b.Number),
+		Hash:         encodeHash(b.Hash),
+		ParentHash:   encodeHash(b.ParentHash),
+		Timestamp:    encodeUint64(b.Timestamp),
+		Transactions: txHashes,
 	}
 }
 
 func toRPCReceipt(r *chain.Receipt, blk *chain.Block) rpcReceipt {
-	logs := make([]rpcLog, 0, len(r.Logs))
+	logs := make([]rpcLog, 0, len(r.Logs)) // non-nil -> JSON "[]", never null
+	for _, l := range r.Logs {
+		topics := make([]string, len(l.Topics))
+		for i, t := range l.Topics {
+			topics[i] = encodeHash(t)
+		}
+		logs = append(logs, rpcLog{
+			Address: encodeAddress(l.Address),
+			Topics:  topics,
+			Data:    "0x" + hex.EncodeToString(l.Data),
+		})
+	}
 	return rpcReceipt{
 		TransactionHash: encodeHash(r.TxHash),
 		Status:          encodeUint64(r.Status),

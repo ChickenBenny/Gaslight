@@ -120,6 +120,18 @@ func TestServeBatch(t *testing.T) {
 	assert.Equal(t, `"0x1"`, byID["2"]) // eth_chainId
 }
 
+// An empty batch "[]" is itself an invalid request per JSON-RPC 2.0.
+func TestServeEmptyBatch(t *testing.T) {
+	h, _ := newHandler(1)
+	out := h.ServeRPC([]byte("[]"))
+
+	var arr []testResp
+	require.NoError(t, json.Unmarshal(out, &arr))
+	require.Len(t, arr, 1)
+	require.NotNil(t, arr[0].Error)
+	assert.Equal(t, -32600, arr[0].Error.Code)
+}
+
 // --- eth_getBlockByNumber ---
 
 type wireBlock struct {
