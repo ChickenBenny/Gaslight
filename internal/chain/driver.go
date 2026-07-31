@@ -136,16 +136,22 @@ func (d *Driver) Reorg(forkFrom uint64, branch [][]Tx) error {
 func (d *Driver) buildBlock(parent *Block, txs []Tx) *Block {
 	d.seq++
 	number := parent.Number + 1
-	receipts := make([]Receipt, len(txs))
-	for i, tx := range txs {
-		receipts[i] = Receipt{TxHash: hashTx(tx), Status: 1}
+
+	// Clone first so we never mutate the caller's txs, then stamp each tx with
+	// its hash and reuse it for the matching receipt.
+	cloned := slices.Clone(txs)
+	receipts := make([]Receipt, len(cloned))
+	for i := range cloned {
+		h := hashTx(cloned[i]) // hashTx ignores the Hash field, so no circularity
+		cloned[i].Hash = h
+		receipts[i] = Receipt{TxHash: h, Status: 1}
 	}
 
 	return &Block{
 		Number:     number,
-		Hash:       hashBlock(d.seq, number, parent.Hash, txs),
+		Hash:       hashBlock(d.seq, number, parent.Hash, cloned),
 		ParentHash: parent.Hash,
-		Txs:        slices.Clone(txs),
+		Txs:        cloned,
 		Receipts:   receipts,
 	}
 }
