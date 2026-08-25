@@ -25,6 +25,8 @@ type Driver struct {
 	current atomic.Pointer[ChainSnapshot]
 	seq     uint64
 	chainID uint64
+	subs    map[uint64]chan *Block
+	subSeq  uint64
 }
 
 // NewDriver returns a Driver whose chain contains only the genesis block.
@@ -64,6 +66,7 @@ func (d *Driver) ProduceBlock(txs []Tx) *Block {
 	ns.canonical = append(ns.canonical, block.Hash)
 	ns.head = block.Hash
 	d.current.Store(ns)
+	d.notifyHeads(block)
 
 	return block
 }
@@ -130,6 +133,7 @@ func (d *Driver) Reorg(forkFrom uint64, branch [][]Tx) error {
 
 	ns.head = newBlocks[len(newBlocks)-1].Hash
 	d.current.Store(ns)
+	d.notifyHeads(newBlocks[len(newBlocks)-1])
 	return nil
 }
 
