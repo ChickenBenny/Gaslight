@@ -3,21 +3,11 @@ package transport
 import (
 	"io"
 	"net/http"
-
-	"github.com/ChickenBenny/Gaslight/internal/rpc"
 )
 
-const maxRequestBody = 1 << 20 // 1 MiB
+const maxRequestBody = 1 << 20
 
-type Server struct {
-	rpc *rpc.Handler
-}
-
-func NewServer(rpc *rpc.Handler) *Server {
-	return &Server{rpc: rpc}
-}
-
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveHTTPRPC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
