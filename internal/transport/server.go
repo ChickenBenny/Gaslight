@@ -3,16 +3,24 @@ package transport
 import (
 	"net/http"
 
+	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/ChickenBenny/Gaslight/internal/rpc"
 	"github.com/gorilla/websocket"
 )
 
-type Server struct {
-	rpc *rpc.Handler
+// HeadSource is the slice of the chain the transport needs: it may subscribe to
+// canonical head changes, and nothing else.
+type HeadSource interface {
+	SubscribeHeads() (<-chan *chain.Block, func())
 }
 
-func NewServer(rpc *rpc.Handler) *Server {
-	return &Server{rpc: rpc}
+type Server struct {
+	rpc   *rpc.Handler
+	heads HeadSource
+}
+
+func NewServer(rpc *rpc.Handler, heads HeadSource) *Server {
+	return &Server{rpc: rpc, heads: heads}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

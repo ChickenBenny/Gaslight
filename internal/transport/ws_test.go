@@ -20,7 +20,7 @@ import (
 func newTestWS(t *testing.T) (*websocket.Conn, *chain.Driver) {
 	t.Helper()
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1)))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
 	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -116,7 +116,7 @@ func TestWSErrorsMatchHTTP(t *testing.T) {
 // while WebSocket upgrades are routed to the WS path.
 func TestHTTPAndWSShareOneEndpoint(t *testing.T) {
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1)))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
 	defer srv.Close()
 	d.ProduceBlock(nil)
 

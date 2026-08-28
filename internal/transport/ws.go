@@ -1,9 +1,11 @@
 package transport
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
 
+	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/gorilla/websocket"
 )
 
@@ -47,4 +49,16 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 
 	c := &wsConn{conn: conn, server: s}
 	c.readLoop()
+}
+
+func (c *wsConn) pump(subID string, heads <-chan *chain.Block) {
+	for head := range heads {
+		msg, err := json.Marshal(newHeadNotification(subID, head))
+		if err != nil {
+			return
+		}
+		if err := c.write(msg); err != nil {
+			return
+		}
+	}
 }

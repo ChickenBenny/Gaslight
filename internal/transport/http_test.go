@@ -29,7 +29,7 @@ type testResp struct {
 func newTestServer(t *testing.T) (string, *chain.Driver) {
 	t.Helper()
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1)))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
 	t.Cleanup(srv.Close)
 	return srv.URL, d
 }
