@@ -7,6 +7,17 @@ import (
 
 const subscriptionMethod = "eth_subscription"
 
+// rpcError mirrors the JSON-RPC error object for the replies this layer writes
+// itself (subscription methods never reach the rpc handler).
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func invalidParams(detail string) *rpcError {
+	return &rpcError{Code: -32602, Message: "invalid params: " + detail}
+}
+
 type subscriptionParams struct {
 	Subscription string `json:"subscription"`
 	Result       any    `json:"result"`

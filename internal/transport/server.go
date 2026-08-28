@@ -15,12 +15,12 @@ type HeadSource interface {
 }
 
 type Server struct {
-	rpc   *rpc.Handler
-	heads HeadSource
+	rpc        *rpc.Handler
+	headSource HeadSource
 }
 
-func NewServer(rpc *rpc.Handler, heads HeadSource) *Server {
-	return &Server{rpc: rpc, heads: heads}
+func NewServer(rpc *rpc.Handler, headSource HeadSource) *Server {
+	return &Server{rpc: rpc, headSource: headSource}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
