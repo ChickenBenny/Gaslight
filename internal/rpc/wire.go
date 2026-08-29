@@ -29,6 +29,22 @@ type rpcLog struct {
 	Data    string   `json:"data"`
 }
 
+type rpcHeader struct {
+	Number     string `json:"number"`
+	Hash       string `json:"hash"`
+	ParentHash string `json:"parentHash"`
+	Timestamp  string `json:"timestamp"`
+}
+
+func NewHeadResult(b *chain.Block) any {
+	return rpcHeader{
+		Number:     encodeUint64(b.Number),
+		Hash:       encodeHash(b.Hash),
+		ParentHash: encodeHash(b.ParentHash),
+		Timestamp:  encodeUint64(b.Timestamp),
+	}
+}
+
 func toRPCBlock(b *chain.Block) rpcBlock {
 	txHashes := make([]string, len(b.Txs))
 	for i, tx := range b.Txs {
