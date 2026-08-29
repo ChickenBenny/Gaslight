@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -330,4 +331,74 @@ func TestWSTwoSubscriptionsBothPush(t *testing.T) {
 
 func encodeQuantity(v uint64) string {
 	return "0x" + strconv.FormatUint(v, 16)
+}
+
+// --- goroutine lifecycle ---
+
+// waitForGoroutines polls until the count drops to at most want, so the test
+// tolerates the scheduler taking a moment to reap finished goroutines.
+func waitForGoroutines(t *testing.T, want int, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	got := runtime.NumGoroutine()
+	for time.Now().Before(deadline) {
+		if got <= want {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+		got = runtime.NumGoroutine()
+	}
+	return got
+}
+
+// Every subscription starts a pump goroutine; closing the connection must stop
+// all of them, otherwise each disconnected client leaks a goroutine forever.
+//
+// No block is produced after the connections close: a later head would wake the
+// pumps and let them exit on a failed write, masking a missing cleanup.
+func TestWSSubscriptionsDoNotLeakGoroutines(t *testing.T) {
+	d := chain.NewDriver(1)
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	defer srv.Close()
+
+	time.Sleep(100 * time.Millisecond)
+	baseline := runtime.NumGoroutine()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conns := make([]*websocket.Conn, 0, 5)
+	for i := 0; i < 5; i++ {
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		require.NoError(t, err)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		conns = append(conns, conn)
+
+		require.Nil(t, subscribe(t, conn, "newHeads").Error)
+		require.Nil(t, call(t, conn, `{"jsonrpc":"2.0","id":2,"method":"eth_subscribe","params":["newHeads"]}`).Error)
+	}
+
+	for _, conn := range conns {
+		require.NoError(t, conn.Close())
+	}
+
+	got := waitForGoroutines(t, baseline+2, 3*time.Second)
+	assert.LessOrEqual(t, got, baseline+2,
+		"goroutines leaked after closing subscribed connections (baseline %d, got %d)", baseline, got)
+}
+
+// Unsubscribing releases the pump without closing the connection.
+func TestWSUnsubscribeReleasesPump(t *testing.T) {
+	conn, d := newTestWS(t)
+
+	before := runtime.NumGoroutine()
+	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+	d.ProduceBlock(nil)
+	recvNotification(t, conn)
+
+	r := call(t, conn, `{"jsonrpc":"2.0","id":2,"method":"eth_unsubscribe","params":["0x1"]}`)
+	require.Equal(t, "true", string(r.Result))
+
+	got := waitForGoroutines(t, before, 2*time.Second)
+	assert.LessOrEqual(t, got, before+1, "pump goroutine should exit after unsubscribe")
 }

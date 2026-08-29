@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/ChickenBenny/Gaslight/internal/rpc"
@@ -17,6 +19,7 @@ type HeadSource interface {
 type Server struct {
 	rpc        *rpc.Handler
 	headSource HeadSource
+	httpSrv    *http.Server
 }
 
 func NewServer(rpc *rpc.Handler, headSource HeadSource) *Server {
@@ -29,4 +32,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveHTTPRPC(w, r)
+}
+
+func (s *Server) Start(addr string) error {
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           s,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return s.httpSrv.ListenAndServe()
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpSrv == nil {
+		return nil
+	}
+	return s.httpSrv.Shutdown(ctx)
 }
