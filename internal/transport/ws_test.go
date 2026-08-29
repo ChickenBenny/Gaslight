@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -401,4 +403,98 @@ func TestWSUnsubscribeReleasesPump(t *testing.T) {
 
 	got := waitForGoroutines(t, before, 2*time.Second)
 	assert.LessOrEqual(t, got, before+1, "pump goroutine should exit after unsubscribe")
+}
+
+// --- review follow-ups ---
+
+// A subscriber the chain drops for falling behind must be told: the connection
+// is closed with a policy-violation frame instead of going silently dead.
+func TestWSSlowSubscriberIsToldItWasDropped(t *testing.T) {
+	conn, d := newTestWS(t)
+	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+
+	// Stop reading and overflow the chain's per-subscriber buffer.
+	for i := 0; i < 200; i++ {
+		d.ProduceBlock(nil)
+	}
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	var closeErr error
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			closeErr = err
+			break
+		}
+	}
+	assert.True(t, websocket.IsCloseError(closeErr, websocket.ClosePolicyViolation),
+		"expected a policy-violation close frame, got %v", closeErr)
+}
+
+// Shutdown must close hijacked WebSocket connections; http.Server never does.
+func TestShutdownClosesWebSocketConnections(t *testing.T) {
+	d := chain.NewDriver(1)
+	s := NewServer(rpc.New(d, 1), d)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	defer conn.Close()
+	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, s.Shutdown(ctx))
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, _, err = conn.ReadMessage()
+	assert.Error(t, err, "connection should be closed by Shutdown")
+}
+
+// Shutdown before Start must not panic or block.
+func TestShutdownBeforeStart(t *testing.T) {
+	d := chain.NewDriver(1)
+	s := NewServer(rpc.New(d, 1), d)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	assert.NoError(t, s.Shutdown(ctx))
+}
+
+// Start and Shutdown race in main.go (Start runs on its own goroutine), so the
+// server must be safe to shut down while it is still coming up. Run with -race.
+func TestStartShutdownNoRace(t *testing.T) {
+	d := chain.NewDriver(1)
+	s := NewServer(rpc.New(d, 1), d)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Start("127.0.0.1:0") }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, s.Shutdown(ctx))
+
+	select {
+	case err := <-done:
+		assert.True(t, err == nil || errors.Is(err, http.ErrServerClosed), "unexpected serve error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return after Shutdown")
+	}
+}
+
+// The WS path enforces the same size cap as HTTP.
+func TestWSRejectsOversizedMessage(t *testing.T) {
+	conn, _ := newTestWS(t)
+
+	huge := strings.Repeat("a", maxRequestBody+1)
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":["`+huge+`"]}`)))
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, _, err := conn.ReadMessage()
+	assert.Error(t, err, "oversized frame should close the connection")
 }

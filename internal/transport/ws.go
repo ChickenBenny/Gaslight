@@ -6,11 +6,17 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/ChickenBenny/Gaslight/internal/rpc"
 	"github.com/gorilla/websocket"
 )
+
+// wsWriteTimeout bounds a single frame write. Without it a peer that stops
+// reading blocks the pump inside WriteMessage while holding c.mu, which stalls
+// the read loop too and leaks both goroutines.
+const wsWriteTimeout = 10 * time.Second
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -31,7 +37,18 @@ type wsConn struct {
 func (c *wsConn) write(data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
 	return c.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// closeWithReason sends a close frame and drops the connection. Control frames
+// may be written concurrently with other writes, so it does not take c.mu.
+func (c *wsConn) closeWithReason(code int, reason string) {
+	msg := websocket.FormatCloseMessage(code, reason)
+	_ = c.conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(wsWriteTimeout))
+	_ = c.conn.Close()
 }
 
 func (c *wsConn) readLoop() {
@@ -70,24 +87,34 @@ func (c *wsConn) handleMessage(msg []byte) error {
 func (c *wsConn) handleSubscribe(req rpc.RPCRequest) error {
 	var kind string
 	if len(req.Params) < 1 || json.Unmarshal(req.Params[0], &kind) != nil {
-		return c.writeResult(req.ID, nil, invalidParams("subscription kind must be a string"))
+		return c.writeResult(req.ID, nil, rpc.NewInvalidParams("subscription kind must be a string"))
 	}
 	if kind != "newHeads" {
-		return c.writeResult(req.ID, nil, invalidParams("unsupported subscription kind: "+kind))
+		return c.writeResult(req.ID, nil, rpc.NewInvalidParams("unsupported subscription kind: "+kind))
 	}
 
 	heads, unsub := c.server.headSource.SubscribeHeads()
 	subID := c.nextSubID()
 	c.addSub(subID, unsub)
-	go c.pump(subID, heads)
 
-	return c.writeResult(req.ID, subID, nil)
+	// Reply before starting the pump: a notification that overtakes the
+	// subscribe response carries an id the client has not learned yet, and
+	// clients drop notifications for unknown subscription ids.
+	if err := c.writeResult(req.ID, subID, nil); err != nil {
+		if u, ok := c.removeSub(subID); ok {
+			u()
+		}
+		return err
+	}
+
+	go c.pump(subID, heads)
+	return nil
 }
 
 func (c *wsConn) handleUnsubscribe(req rpc.RPCRequest) error {
 	var subID string
 	if len(req.Params) < 1 || json.Unmarshal(req.Params[0], &subID) != nil {
-		return c.writeResult(req.ID, nil, invalidParams("subscription id must be a string"))
+		return c.writeResult(req.ID, nil, rpc.NewInvalidParams("subscription id must be a string"))
 	}
 
 	unsub, ok := c.removeSub(subID)
@@ -97,13 +124,15 @@ func (c *wsConn) handleUnsubscribe(req rpc.RPCRequest) error {
 	return c.writeResult(req.ID, ok, nil)
 }
 
-func (c *wsConn) writeResult(id json.RawMessage, result any, rpcErr *rpcError) error {
-	resp := struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Result  any             `json:"result,omitempty"`
-		Error   *rpcError       `json:"error,omitempty"`
-	}{JSONRPC: "2.0", ID: id, Result: result, Error: rpcErr}
+func (c *wsConn) writeResult(id json.RawMessage, result any, rpcErr *rpc.RPCError) error {
+	resp := rpc.RPCResponse{JSONRPC: "2.0", ID: id, Error: rpcErr}
+	if rpcErr == nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		resp.Result = encoded
+	}
 
 	out, err := json.Marshal(resp)
 	if err != nil {
@@ -118,8 +147,12 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxRequestBody) // same cap the HTTP path enforces
 
 	c := &wsConn{conn: conn, server: s}
+	s.addConn(c)
+	defer s.removeConn(c)
+
 	c.readLoop()
 	c.closeAllSubs() // let every pump goroutine exit before we return
 }
@@ -133,6 +166,13 @@ func (c *wsConn) pump(subID string, heads <-chan *chain.Block) {
 		if err := c.write(msg); err != nil {
 			return
 		}
+	}
+
+	// The channel closed. If this subscription is still registered the chain
+	// dropped it for falling behind, rather than the client unsubscribing —
+	// tell the client instead of leaving it with a silently dead subscription.
+	if _, dropped := c.removeSub(subID); dropped {
+		c.closeWithReason(websocket.ClosePolicyViolation, "subscription dropped: consumer too slow")
 	}
 }
 

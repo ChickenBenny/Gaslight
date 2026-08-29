@@ -17,6 +17,12 @@ func errMethodNotFound() *RPCError {
 func errInvalidParams(detail string) *RPCError {
 	return &RPCError{Code: -32602, Message: "invalid params: " + detail}
 }
+
+// NewInvalidParams builds the same -32602 error for layers that answer a
+// request themselves, so their replies cannot drift from the handler's.
+func NewInvalidParams(detail string) *RPCError {
+	return errInvalidParams(detail)
+}
 func errInternal() *RPCError {
 	return &RPCError{Code: -32603, Message: "internal error"}
 }

@@ -52,6 +52,7 @@ func main() {
 	case err := <-serveErr:
 		if err != nil {
 			log.Printf("server error: %v", err)
+			os.Exit(1) // a listen failure must not look like a clean exit
 		}
 	}
 
