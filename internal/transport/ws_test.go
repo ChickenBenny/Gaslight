@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,27 +408,50 @@ func TestWSUnsubscribeReleasesPump(t *testing.T) {
 
 // --- review follow-ups ---
 
+// fakeHeadSource hands out a channel the test controls, so "the chain dropped
+// this subscriber" can be triggered directly instead of racing socket buffers.
+type fakeHeadSource struct {
+	mu sync.Mutex
+	ch chan *chain.Block
+}
+
+func (f *fakeHeadSource) SubscribeHeads() (<-chan *chain.Block, func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ch = make(chan *chain.Block, 1)
+	return f.ch, func() {}
+}
+
+// drop closes the channel the way chain.Driver does when a subscriber falls
+// behind: the entry is gone on its side, but nothing told the client yet.
+func (f *fakeHeadSource) drop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	close(f.ch)
+}
+
 // A subscriber the chain drops for falling behind must be told: the connection
 // is closed with a policy-violation frame instead of going silently dead.
 func TestWSSlowSubscriberIsToldItWasDropped(t *testing.T) {
-	conn, d := newTestWS(t)
-	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+	src := &fakeHeadSource{}
+	srv := httptest.NewServer(NewServer(rpc.New(chain.NewDriver(1), 1), src))
+	defer srv.Close()
 
-	// Stop reading and overflow the chain's per-subscriber buffer.
-	for i := 0; i < 200; i++ {
-		d.ProduceBlock(nil)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil {
+		resp.Body.Close()
 	}
+	defer conn.Close()
+
+	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+	src.drop()
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
-	var closeErr error
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			closeErr = err
-			break
-		}
-	}
-	assert.True(t, websocket.IsCloseError(closeErr, websocket.ClosePolicyViolation),
-		"expected a policy-violation close frame, got %v", closeErr)
+	_, _, err = conn.ReadMessage()
+	assert.True(t, websocket.IsCloseError(err, websocket.ClosePolicyViolation),
+		"expected a policy-violation close frame, got %v", err)
 }
 
 // Shutdown must close hijacked WebSocket connections; http.Server never does.
