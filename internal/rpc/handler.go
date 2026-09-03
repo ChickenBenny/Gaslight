@@ -33,15 +33,19 @@ type RPCResponse struct {
 	Error   *RPCError       `json:"error,omitempty"`
 }
 
-func New(src SnapshotSource, chainID uint64) *Handler {
+func New(src SnapshotSource, chainID uint64, fs FaultSource) *Handler {
 	h := &Handler{src: src, chainID: chainID}
-	h.methods = map[string]methodFunc{
+	rawMethodMap := map[string]methodFunc{
 		"eth_blockNumber":           h.ethBlockNumber,
 		"eth_chainId":               h.ethChainID,
 		"net_version":               h.netVersion,
 		"eth_getBlockByNumber":      h.ethGetBlockByNumber,
 		"eth_getBlockByHash":        h.ethGetBlockByHash,
 		"eth_getTransactionReceipt": h.ethGetTransactionReceipt,
+	}
+	h.methods = make(map[string]methodFunc, len(rawMethodMap))
+	for name, fn := range rawMethodMap {
+		h.methods[name] = withFaults(fs, name, fn)
 	}
 	return h
 }

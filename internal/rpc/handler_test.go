@@ -22,7 +22,7 @@ type testResp struct {
 
 func newHandler(chainID uint64) (*Handler, *chain.Driver) {
 	d := chain.NewDriver(chainID)
-	return New(d, chainID), d // *chain.Driver satisfies SnapshotSource
+	return New(d, chainID, nil), d // *chain.Driver satisfies SnapshotSource
 }
 
 func decodeResp(t *testing.T, raw []byte) testResp {

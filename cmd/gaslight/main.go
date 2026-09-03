@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
+	"github.com/ChickenBenny/Gaslight/internal/faults"
 	"github.com/ChickenBenny/Gaslight/internal/rpc"
 	"github.com/ChickenBenny/Gaslight/internal/transport"
 	"github.com/ChickenBenny/Gaslight/internal/version"
@@ -26,7 +27,9 @@ func main() {
 	flag.Parse()
 
 	d := chain.NewDriver(*chainID)
-	srv := transport.NewServer(rpc.New(d, *chainID), d)
+	// Empty until the scenario engine starts enabling faults from a timeline.
+	reg := faults.NewRegistry()
+	srv := transport.NewServer(rpc.New(d, *chainID, reg), d)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

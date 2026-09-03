@@ -25,7 +25,7 @@ import (
 func newTestWS(t *testing.T) (*websocket.Conn, *chain.Driver) {
 	t.Helper()
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -121,7 +121,7 @@ func TestWSErrorsMatchHTTP(t *testing.T) {
 // while WebSocket upgrades are routed to the WS path.
 func TestHTTPAndWSShareOneEndpoint(t *testing.T) {
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	defer srv.Close()
 	d.ProduceBlock(nil)
 
@@ -361,7 +361,7 @@ func waitForGoroutines(t *testing.T, want int, timeout time.Duration) int {
 // pumps and let them exit on a failed write, masking a missing cleanup.
 func TestWSSubscriptionsDoNotLeakGoroutines(t *testing.T) {
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	defer srv.Close()
 
 	time.Sleep(100 * time.Millisecond)
@@ -434,7 +434,7 @@ func (f *fakeHeadSource) drop() {
 // is closed with a policy-violation frame instead of going silently dead.
 func TestWSSlowSubscriberIsToldItWasDropped(t *testing.T) {
 	src := &fakeHeadSource{}
-	srv := httptest.NewServer(NewServer(rpc.New(chain.NewDriver(1), 1), src))
+	srv := httptest.NewServer(NewServer(rpc.New(chain.NewDriver(1), 1, nil), src))
 	defer srv.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -457,7 +457,7 @@ func TestWSSlowSubscriberIsToldItWasDropped(t *testing.T) {
 // Shutdown must close hijacked WebSocket connections; http.Server never does.
 func TestShutdownClosesWebSocketConnections(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 	srv := httptest.NewServer(s)
 	defer srv.Close()
 
@@ -482,7 +482,7 @@ func TestShutdownClosesWebSocketConnections(t *testing.T) {
 // Shutdown before Start must not panic or block.
 func TestShutdownBeforeStart(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -493,7 +493,7 @@ func TestShutdownBeforeStart(t *testing.T) {
 // server must be safe to shut down while it is still coming up. Run with -race.
 func TestStartShutdownNoRace(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 
 	done := make(chan error, 1)
 	go func() { done <- s.Start("127.0.0.1:0") }()
