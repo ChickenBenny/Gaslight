@@ -28,7 +28,7 @@ func TestRegistryPassesThroughWhenEmpty(t *testing.T) {
 // false_200 replaces a successful result with nil, which serialises to JSON null.
 func TestFalseNullReplacesResult(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	result, err := truth()
 	result, err = r.After(receiptMethod, result, err)
@@ -40,7 +40,7 @@ func TestFalseNullReplacesResult(t *testing.T) {
 // A fault only fires for the method it names.
 func TestFaultOnlyAffectsItsMethod(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	result, err := truth()
 	result, err = r.After("eth_blockNumber", result, err)
@@ -51,7 +51,7 @@ func TestFaultOnlyAffectsItsMethod(t *testing.T) {
 
 func TestWildcardMatchesEveryMethod(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(AllMethods, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(AllMethods, FalseNull, 0, 0)))
 
 	for _, m := range []string{receiptMethod, "eth_blockNumber", "net_version"} {
 		result, err := truth()
@@ -65,7 +65,7 @@ func TestWildcardMatchesEveryMethod(t *testing.T) {
 // exercises a client's retry path.
 func TestCountLimitsHowOftenAFaultFires(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 2, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 2, 0)))
 
 	for i := range 2 {
 		result, err := truth()
@@ -83,7 +83,7 @@ func TestCountLimitsHowOftenAFaultFires(t *testing.T) {
 // count=0 means unlimited.
 func TestZeroCountIsUnlimited(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	for i := range 50 {
 		result, err := truth()
@@ -96,7 +96,7 @@ func TestZeroCountIsUnlimited(t *testing.T) {
 // left alone so the client still sees the real error.
 func TestFalseNullLeavesErrorsAlone(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	rpcErr := rpc.NewInvalidParams("bad")
 	result, err := r.After(receiptMethod, nil, rpcErr)
@@ -107,7 +107,7 @@ func TestFalseNullLeavesErrorsAlone(t *testing.T) {
 
 func TestClearRemovesEveryFault(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 	r.Clear()
 
 	result, err := truth()
@@ -120,7 +120,7 @@ func TestClearRemovesEveryFault(t *testing.T) {
 
 func TestDelayWaitsOnTheRequestPath(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, Delay, 0, 50*time.Millisecond))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 50*time.Millisecond)))
 
 	start := time.Now()
 	r.Before(receiptMethod)
@@ -129,7 +129,7 @@ func TestDelayWaitsOnTheRequestPath(t *testing.T) {
 
 func TestDelayDoesNotAffectOtherMethods(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, Delay, 0, 500*time.Millisecond))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 500*time.Millisecond)))
 
 	start := time.Now()
 	r.Before("eth_blockNumber")
@@ -139,7 +139,7 @@ func TestDelayDoesNotAffectOtherMethods(t *testing.T) {
 // Delay is on the request path, so it must not alter the answer.
 func TestDelayLeavesTheResultIntact(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, Delay, 0, time.Millisecond))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, time.Millisecond)))
 
 	result, err := truth()
 	result, err = r.After(receiptMethod, result, err)
@@ -157,7 +157,7 @@ func TestCountIsExactUnderConcurrency(t *testing.T) {
 	const perCaller = 50
 
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, FalseNull, budget, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, budget, 0)))
 
 	var mu sync.Mutex
 	lies := 0
@@ -192,7 +192,7 @@ func TestEnableConcurrentWithReads(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			r.Enable(NewFault(receiptMethod, FalseNull, 1, 0))
+			require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 1, 0)))
 		}
 	}()
 	go func() {
@@ -209,8 +209,8 @@ func TestEnableConcurrentWithReads(t *testing.T) {
 // false-null replaces its result.
 func TestDelayAndFalseNullCombine(t *testing.T) {
 	r := NewRegistry()
-	r.Enable(NewFault(receiptMethod, Delay, 0, 20*time.Millisecond))
-	r.Enable(NewFault(receiptMethod, FalseNull, 0, 0))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 20*time.Millisecond)))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	start := time.Now()
 	r.Before(receiptMethod)
@@ -228,4 +228,114 @@ func TestNewFaultRejectsNothingButRecordsItsFields(t *testing.T) {
 	assert.Equal(t, receiptMethod, f.Method)
 	assert.Equal(t, Delay, f.Type)
 	assert.Equal(t, 250*time.Millisecond, f.Delay)
+}
+
+// --- review follow-ups ---
+
+// A call that honestly had nothing to return must not spend budget. Otherwise a
+// "lie once" fault is used up by the legitimate nulls a deposit engine sees
+// while its transaction is still pending, and the real lie never happens.
+func TestNilResultDoesNotSpendBudget(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 1, 0)))
+
+	for range 10 {
+		result, err := r.After(receiptMethod, nil, nil)
+		assert.Nil(t, result)
+		assert.Nil(t, err)
+	}
+
+	result, _ := r.After(receiptMethod, "the truth", nil)
+	assert.Nil(t, result, "the single unit of budget should still have been available")
+
+	result, _ = r.After(receiptMethod, "the truth", nil)
+	assert.Equal(t, "the truth", result, "and now it is spent")
+}
+
+// An unrecognised type must be rejected: silently storing it would leave a green
+// run indistinguishable from one where the fault never fired.
+func TestEnableRejectsUnknownType(t *testing.T) {
+	r := NewRegistry()
+
+	err := r.Enable(NewFault(receiptMethod, Type("false500"), 1, 0))
+	require.ErrorIs(t, err, ErrUnknownType)
+
+	result, _ := r.After(receiptMethod, "the truth", nil)
+	assert.Equal(t, "the truth", result, "the rejected fault must not be stored")
+}
+
+func TestParseType(t *testing.T) {
+	for _, s := range []string{"false_200", "delay"} {
+		got, err := ParseType(s)
+		require.NoErrorf(t, err, "ParseType(%q)", s)
+		assert.Equal(t, Type(s), got)
+	}
+	for _, s := range []string{"", "false200", "FalseNull", "sleep"} {
+		_, err := ParseType(s)
+		assert.ErrorIsf(t, err, ErrUnknownType, "ParseType(%q) should fail", s)
+	}
+}
+
+// A nil *Registry must behave as "no faults" rather than panicking: it is the
+// natural way to make faults optional, and a typed nil is invisible to the
+// interface nil check in withFaults.
+func TestNilRegistryIsSafe(t *testing.T) {
+	var r *Registry
+
+	assert.NotPanics(t, func() { r.Before(receiptMethod) })
+	assert.NotPanics(t, func() { r.Clear() })
+	assert.NotPanics(t, func() {
+		require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
+	})
+
+	result, err := r.After(receiptMethod, "the truth", nil)
+	assert.Equal(t, "the truth", result)
+	assert.Nil(t, err)
+}
+
+// Overlapping delays take the longest rather than adding up, so a baseline
+// wildcard delay does not silently inflate a targeted one.
+func TestOverlappingDelaysTakeTheLongest(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Enable(NewFault(AllMethods, Delay, 0, 40*time.Millisecond)))
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 80*time.Millisecond)))
+
+	start := time.Now()
+	r.Before(receiptMethod)
+	elapsed := time.Since(start)
+
+	assert.GreaterOrEqual(t, elapsed, 80*time.Millisecond)
+	assert.Less(t, elapsed, 110*time.Millisecond, "delays must not sum to 120ms")
+}
+
+// Only the delay that actually ran spends a unit of its count.
+func TestOnlyTheAppliedDelaySpendsBudget(t *testing.T) {
+	r := NewRegistry()
+	short := NewFault(AllMethods, Delay, 1, time.Millisecond)
+	long := NewFault(receiptMethod, Delay, 1, 30*time.Millisecond)
+	require.NoError(t, r.Enable(short))
+	require.NoError(t, r.Enable(long))
+
+	r.Before(receiptMethod) // the long one wins and is spent
+
+	start := time.Now()
+	r.Before(receiptMethod) // long is spent; the short one should still fire
+	elapsed := time.Since(start)
+	assert.Less(t, elapsed, 20*time.Millisecond, "the spent long delay must not fire again")
+}
+
+// Spent faults are reaped so a long scenario does not keep walking over them.
+func TestEnableReapsSpentFaults(t *testing.T) {
+	r := NewRegistry()
+
+	for range 100 {
+		require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 1, 0)))
+		_, _ = r.After(receiptMethod, "the truth", nil) // spend it
+	}
+	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 1, 0)))
+
+	r.mu.RLock()
+	held := len(r.faults)
+	r.mu.RUnlock()
+	assert.LessOrEqual(t, held, 2, "spent faults should not accumulate, holding %d", held)
 }

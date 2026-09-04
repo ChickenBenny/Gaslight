@@ -408,26 +408,47 @@ func TestWSUnsubscribeReleasesPump(t *testing.T) {
 
 // --- review follow-ups ---
 
-// fakeHeadSource hands out a channel the test controls, so "the chain dropped
+// fakeHeadSource hands out channels the test controls, so "the chain dropped
 // this subscriber" can be triggered directly instead of racing socket buffers.
+// Every subscription is tracked, so a test may open several and still have all
+// of them released — an unreleased one would leak a pump goroutine and look
+// like a server bug.
 type fakeHeadSource struct {
-	mu sync.Mutex
-	ch chan *chain.Block
+	mu  sync.Mutex
+	chs []chan *chain.Block
 }
 
 func (f *fakeHeadSource) SubscribeHeads() (<-chan *chain.Block, func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.ch = make(chan *chain.Block, 1)
-	return f.ch, func() {}
+	ch := make(chan *chain.Block, 1)
+	f.chs = append(f.chs, ch)
+	return ch, func() { f.closeChan(ch) }
 }
 
-// drop closes the channel the way chain.Driver does when a subscriber falls
-// behind: the entry is gone on its side, but nothing told the client yet.
+// drop closes every open channel the way chain.Driver does when a subscriber
+// falls behind: the entry is gone on its side, but nothing told the client yet.
 func (f *fakeHeadSource) drop() {
 	f.mu.Lock()
+	chs := f.chs
+	f.chs = nil
+	f.mu.Unlock()
+
+	for _, ch := range chs {
+		close(ch)
+	}
+}
+
+func (f *fakeHeadSource) closeChan(target chan *chain.Block) {
+	f.mu.Lock()
 	defer f.mu.Unlock()
-	close(f.ch)
+	for i, ch := range f.chs {
+		if ch == target {
+			f.chs = append(f.chs[:i], f.chs[i+1:]...)
+			close(ch)
+			return
+		}
+	}
 }
 
 // A subscriber the chain drops for falling behind must be told: the connection

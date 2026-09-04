@@ -66,7 +66,7 @@ func TestFalseNullOverServeRPC(t *testing.T) {
 	require.Nil(t, truthful.Error)
 	require.NotEqual(t, "null", string(truthful.Result), "the receipt must exist before we lie about it")
 
-	reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0)))
 
 	lied := call(t, h, req)
 	assert.Nil(t, lied.Error, "a false 200 carries no error — that is what makes it dangerous")
@@ -81,7 +81,7 @@ func TestFaultExpiresSoRetriesSucceed(t *testing.T) {
 	tx := depositTx(t, d)
 	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["` + tx + `"]}`
 
-	reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 1, 0))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 1, 0)))
 
 	first := call(t, h, req)
 	require.Equal(t, "null", string(first.Result), "first call should be the lie")
@@ -96,7 +96,7 @@ func TestOtherMethodsAreUnaffected(t *testing.T) {
 	for range 3 {
 		d.ProduceBlock(nil)
 	}
-	reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0)))
 
 	out := call(t, h, `{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`)
 	require.Nil(t, out.Error)
@@ -108,7 +108,7 @@ func TestOtherMethodsAreUnaffected(t *testing.T) {
 func TestFaultAppliesInsideBatch(t *testing.T) {
 	h, d, reg := newStack(t)
 	tx := depositTx(t, d)
-	reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0)))
 
 	body := `[{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["` + tx + `"]},
 	          {"jsonrpc":"2.0","id":2,"method":"eth_blockNumber"}]`
@@ -130,7 +130,7 @@ func TestFaultAppliesInsideBatch(t *testing.T) {
 func TestWildcardOverServeRPC(t *testing.T) {
 	h, d, reg := newStack(t)
 	d.ProduceBlock(nil)
-	reg.Enable(faults.NewFault(faults.AllMethods, faults.FalseNull, 0, 0))
+	require.NoError(t, reg.Enable(faults.NewFault(faults.AllMethods, faults.FalseNull, 0, 0)))
 
 	out := call(t, h, `{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`)
 	require.Nil(t, out.Error)
@@ -141,7 +141,7 @@ func TestWildcardOverServeRPC(t *testing.T) {
 func TestDelayOverServeRPC(t *testing.T) {
 	h, d, reg := newStack(t)
 	d.ProduceBlock(nil)
-	reg.Enable(faults.NewFault("eth_blockNumber", faults.Delay, 0, 60*time.Millisecond))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_blockNumber", faults.Delay, 0, 60*time.Millisecond)))
 
 	start := time.Now()
 	out := call(t, h, `{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`)
@@ -169,9 +169,25 @@ func TestClearRestoresTruthOverServeRPC(t *testing.T) {
 	tx := depositTx(t, d)
 	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["` + tx + `"]}`
 
-	reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0))
+	require.NoError(t, reg.Enable(faults.NewFault("eth_getTransactionReceipt", faults.FalseNull, 0, 0)))
 	require.Equal(t, "null", string(call(t, h, req).Result))
 
 	reg.Clear()
 	assert.NotEqual(t, "null", string(call(t, h, req).Result))
+}
+
+// A nil *Registry stored in the FaultSource interface is not an untyped nil, so
+// the check in withFaults cannot see it — the registry itself has to tolerate
+// being nil. This is the natural way to make faults optional.
+func TestTypedNilRegistryIsAPassThrough(t *testing.T) {
+	var reg *faults.Registry
+	d := chain.NewDriver(1)
+	h := rpc.New(d, 1, reg)
+	d.ProduceBlock(nil)
+
+	require.NotPanics(t, func() {
+		out := call(t, h, `{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`)
+		require.Nil(t, out.Error)
+		assert.Equal(t, `"0x1"`, string(out.Result))
+	})
 }
