@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -28,6 +29,7 @@ type wsConn struct {
 	conn   *websocket.Conn
 	mu     sync.Mutex
 	server *Server
+	ctx    context.Context // cancelled when the connection goes away
 
 	subMu  sync.Mutex
 	subs   map[string]func()
@@ -71,7 +73,7 @@ func (c *wsConn) handleMessage(msg []byte) error {
 
 	var req rpc.RPCRequest
 	if len(trimmed) == 0 || trimmed[0] == '[' || json.Unmarshal(trimmed, &req) != nil {
-		return c.write(c.server.rpc.ServeRPC(msg))
+		return c.write(c.server.rpc.ServeRPC(c.ctx, msg))
 	}
 
 	switch req.Method {
@@ -80,7 +82,7 @@ func (c *wsConn) handleMessage(msg []byte) error {
 	case "eth_unsubscribe":
 		return c.handleUnsubscribe(req)
 	default:
-		return c.write(c.server.rpc.ServeRPC(msg))
+		return c.write(c.server.rpc.ServeRPC(c.ctx, msg))
 	}
 }
 
@@ -149,7 +151,12 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(maxRequestBody) // same cap the HTTP path enforces
 
-	c := &wsConn{conn: conn, server: s}
+	// Cancelled when this connection ends, so anything waiting on behalf of it
+	// (a delay fault, say) stops instead of outliving the connection.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	c := &wsConn{conn: conn, server: s, ctx: ctx}
 	s.addConn(c)
 	defer s.removeConn(c)
 

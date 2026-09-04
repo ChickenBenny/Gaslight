@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +26,7 @@ import (
 func newTestWS(t *testing.T) (*websocket.Conn, *chain.Driver) {
 	t.Helper()
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -120,7 +122,7 @@ func TestWSErrorsMatchHTTP(t *testing.T) {
 // while WebSocket upgrades are routed to the WS path.
 func TestHTTPAndWSShareOneEndpoint(t *testing.T) {
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	defer srv.Close()
 	d.ProduceBlock(nil)
 
@@ -360,7 +362,7 @@ func waitForGoroutines(t *testing.T, want int, timeout time.Duration) int {
 // pumps and let them exit on a failed write, masking a missing cleanup.
 func TestWSSubscriptionsDoNotLeakGoroutines(t *testing.T) {
 	d := chain.NewDriver(1)
-	srv := httptest.NewServer(NewServer(rpc.New(d, 1), d))
+	srv := httptest.NewServer(NewServer(rpc.New(d, 1, nil), d))
 	defer srv.Close()
 
 	time.Sleep(100 * time.Millisecond)
@@ -407,33 +409,77 @@ func TestWSUnsubscribeReleasesPump(t *testing.T) {
 
 // --- review follow-ups ---
 
+// fakeHeadSource hands out channels the test controls, so "the chain dropped
+// this subscriber" can be triggered directly instead of racing socket buffers.
+// Every subscription is tracked, so a test may open several and still have all
+// of them released — an unreleased one would leak a pump goroutine and look
+// like a server bug.
+type fakeHeadSource struct {
+	mu  sync.Mutex
+	chs []chan *chain.Block
+}
+
+func (f *fakeHeadSource) SubscribeHeads() (<-chan *chain.Block, func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ch := make(chan *chain.Block, 1)
+	f.chs = append(f.chs, ch)
+	return ch, func() { f.closeChan(ch) }
+}
+
+// drop closes every open channel the way chain.Driver does when a subscriber
+// falls behind: the entry is gone on its side, but nothing told the client yet.
+func (f *fakeHeadSource) drop() {
+	f.mu.Lock()
+	chs := f.chs
+	f.chs = nil
+	f.mu.Unlock()
+
+	for _, ch := range chs {
+		close(ch)
+	}
+}
+
+func (f *fakeHeadSource) closeChan(target chan *chain.Block) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, ch := range f.chs {
+		if ch == target {
+			f.chs = append(f.chs[:i], f.chs[i+1:]...)
+			close(ch)
+			return
+		}
+	}
+}
+
 // A subscriber the chain drops for falling behind must be told: the connection
 // is closed with a policy-violation frame instead of going silently dead.
 func TestWSSlowSubscriberIsToldItWasDropped(t *testing.T) {
-	conn, d := newTestWS(t)
-	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+	src := &fakeHeadSource{}
+	srv := httptest.NewServer(NewServer(rpc.New(chain.NewDriver(1), 1, nil), src))
+	defer srv.Close()
 
-	// Stop reading and overflow the chain's per-subscriber buffer.
-	for i := 0; i < 200; i++ {
-		d.ProduceBlock(nil)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil {
+		resp.Body.Close()
 	}
+	defer conn.Close()
+
+	require.Nil(t, subscribe(t, conn, "newHeads").Error)
+	src.drop()
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
-	var closeErr error
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			closeErr = err
-			break
-		}
-	}
-	assert.True(t, websocket.IsCloseError(closeErr, websocket.ClosePolicyViolation),
-		"expected a policy-violation close frame, got %v", closeErr)
+	_, _, err = conn.ReadMessage()
+	assert.True(t, websocket.IsCloseError(err, websocket.ClosePolicyViolation),
+		"expected a policy-violation close frame, got %v", err)
 }
 
 // Shutdown must close hijacked WebSocket connections; http.Server never does.
 func TestShutdownClosesWebSocketConnections(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 	srv := httptest.NewServer(s)
 	defer srv.Close()
 
@@ -458,7 +504,7 @@ func TestShutdownClosesWebSocketConnections(t *testing.T) {
 // Shutdown before Start must not panic or block.
 func TestShutdownBeforeStart(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -469,7 +515,7 @@ func TestShutdownBeforeStart(t *testing.T) {
 // server must be safe to shut down while it is still coming up. Run with -race.
 func TestStartShutdownNoRace(t *testing.T) {
 	d := chain.NewDriver(1)
-	s := NewServer(rpc.New(d, 1), d)
+	s := NewServer(rpc.New(d, 1, nil), d)
 
 	done := make(chan error, 1)
 	go func() { done <- s.Start("127.0.0.1:0") }()
@@ -497,4 +543,60 @@ func TestWSRejectsOversizedMessage(t *testing.T) {
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 	_, _, err := conn.ReadMessage()
 	assert.Error(t, err, "oversized frame should close the connection")
+}
+
+// Shutdown must not be held up by work a fault made slow: http.Server.Shutdown
+// only waits for handlers to return, so an in-flight request has to be told to
+// stop. Otherwise a clean signal blows the caller's deadline and the process
+// reports failure.
+//
+// This drives the server's own http.Server rather than httptest, because
+// httptest supplies its own and would bypass the BaseContext under test.
+func TestShutdownCancelsInFlightRequests(t *testing.T) {
+	d := chain.NewDriver(1)
+	s := NewServer(rpc.New(d, 1, blockingFaults{}), d)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = s.httpSrv.Serve(ln) }()
+	url := "http://" + ln.Addr().String()
+
+	done := make(chan struct{})
+	go func() {
+		resp, err := http.Post(url, "application/json",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`))
+		if err == nil {
+			resp.Body.Close()
+		}
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond) // let the request reach the fault
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	assert.NoError(t, s.Shutdown(ctx), "shutdown should not time out waiting on an injected delay")
+	assert.Less(t, time.Since(start), 2*time.Second)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the in-flight request never returned")
+	}
+}
+
+// blockingFaults stalls every call until its context is cancelled, standing in
+// for a long delay fault.
+type blockingFaults struct{}
+
+func (blockingFaults) Before(ctx context.Context, _ string) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(30 * time.Second):
+	}
+}
+
+func (blockingFaults) After(_ string, result any, err *rpc.RPCError) (any, *rpc.RPCError) {
+	return result, err
 }
