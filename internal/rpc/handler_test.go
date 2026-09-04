@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestServeEthBlockNumber(t *testing.T) {
 		d.ProduceBlock(nil)
 	}
 
-	out := h.ServeRPC([]byte(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}`))
+	out := h.ServeRPC(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}`))
 	r := decodeResp(t, out)
 
 	require.Nil(t, r.Error)
@@ -50,7 +51,7 @@ func TestServeEthBlockNumber(t *testing.T) {
 func TestServeEthChainId(t *testing.T) {
 	h, _ := newHandler(5)
 
-	out := h.ServeRPC([]byte(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}`))
+	out := h.ServeRPC(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}`))
 	r := decodeResp(t, out)
 
 	require.Nil(t, r.Error)
@@ -60,7 +61,7 @@ func TestServeEthChainId(t *testing.T) {
 func TestServeNetVersion(t *testing.T) {
 	h, _ := newHandler(5)
 
-	out := h.ServeRPC([]byte(`{"jsonrpc":"2.0","id":1,"method":"net_version"}`))
+	out := h.ServeRPC(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"net_version"}`))
 	r := decodeResp(t, out)
 
 	require.Nil(t, r.Error)
@@ -70,7 +71,7 @@ func TestServeNetVersion(t *testing.T) {
 func TestServeIDEchoedForStringID(t *testing.T) {
 	h, _ := newHandler(1)
 
-	out := h.ServeRPC([]byte(`{"jsonrpc":"2.0","id":"abc","method":"eth_chainId"}`))
+	out := h.ServeRPC(context.Background(), []byte(`{"jsonrpc":"2.0","id":"abc","method":"eth_chainId"}`))
 	r := decodeResp(t, out)
 
 	assert.Equal(t, `"abc"`, string(r.ID))
@@ -79,7 +80,7 @@ func TestServeIDEchoedForStringID(t *testing.T) {
 func TestServeUnknownMethod(t *testing.T) {
 	h, _ := newHandler(1)
 
-	out := h.ServeRPC([]byte(`{"jsonrpc":"2.0","id":1,"method":"eth_doesNotExist"}`))
+	out := h.ServeRPC(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"eth_doesNotExist"}`))
 	r := decodeResp(t, out)
 
 	require.NotNil(t, r.Error)
@@ -89,7 +90,7 @@ func TestServeUnknownMethod(t *testing.T) {
 func TestServeParseError(t *testing.T) {
 	h, _ := newHandler(1)
 
-	out := h.ServeRPC([]byte(`{not valid json`))
+	out := h.ServeRPC(context.Background(), []byte(`{not valid json`))
 	r := decodeResp(t, out)
 
 	require.NotNil(t, r.Error)
@@ -101,7 +102,7 @@ func TestServeBatch(t *testing.T) {
 	d.ProduceBlock(nil)
 	d.ProduceBlock(nil) // height 2
 
-	out := h.ServeRPC([]byte(`[
+	out := h.ServeRPC(context.Background(), []byte(`[
 		{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"},
 		{"jsonrpc":"2.0","id":2,"method":"eth_chainId"}
 	]`))
@@ -123,7 +124,7 @@ func TestServeBatch(t *testing.T) {
 // An empty batch "[]" is itself an invalid request per JSON-RPC 2.0.
 func TestServeEmptyBatch(t *testing.T) {
 	h, _ := newHandler(1)
-	out := h.ServeRPC([]byte("[]"))
+	out := h.ServeRPC(context.Background(), []byte("[]"))
 
 	var arr []testResp
 	require.NoError(t, json.Unmarshal(out, &arr))
@@ -146,7 +147,7 @@ type wireBlock struct {
 func getBlock(t *testing.T, h *Handler, param string) testResp {
 	t.Helper()
 	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":[` + param + `,false]}`
-	return decodeResp(t, h.ServeRPC([]byte(req)))
+	return decodeResp(t, h.ServeRPC(context.Background(), []byte(req)))
 }
 
 func TestServeGetBlockByNumberLatest(t *testing.T) {
@@ -223,7 +224,7 @@ func TestServeGetBlockByNumberIncludesTxHashes(t *testing.T) {
 func getBlockByHash(t *testing.T, h *Handler, hashHex string) testResp {
 	t.Helper()
 	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByHash","params":["` + hashHex + `",false]}`
-	return decodeResp(t, h.ServeRPC([]byte(req)))
+	return decodeResp(t, h.ServeRPC(context.Background(), []byte(req)))
 }
 
 func TestServeGetBlockByHashFound(t *testing.T) {
@@ -293,7 +294,7 @@ type wireReceipt struct {
 func getReceipt(t *testing.T, h *Handler, txHashHex string) testResp {
 	t.Helper()
 	req := `{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["` + txHashHex + `"]}`
-	return decodeResp(t, h.ServeRPC([]byte(req)))
+	return decodeResp(t, h.ServeRPC(context.Background(), []byte(req)))
 }
 
 func TestServeGetTransactionReceiptFound(t *testing.T) {

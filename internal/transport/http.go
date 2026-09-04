@@ -21,7 +21,7 @@ func (s *Server) serveHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := s.rpc.ServeRPC(body)
+	out := s.rpc.ServeRPC(r.Context(), body)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(out)
 }

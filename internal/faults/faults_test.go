@@ -1,6 +1,7 @@
 package faults
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestDelayWaitsOnTheRequestPath(t *testing.T) {
 	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 50*time.Millisecond)))
 
 	start := time.Now()
-	r.Before(receiptMethod)
+	r.Before(context.Background(), receiptMethod)
 	assert.GreaterOrEqual(t, time.Since(start), 50*time.Millisecond)
 }
 
@@ -132,7 +133,7 @@ func TestDelayDoesNotAffectOtherMethods(t *testing.T) {
 	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 500*time.Millisecond)))
 
 	start := time.Now()
-	r.Before("eth_blockNumber")
+	r.Before(context.Background(), "eth_blockNumber")
 	assert.Less(t, time.Since(start), 100*time.Millisecond)
 }
 
@@ -213,7 +214,7 @@ func TestDelayAndFalseNullCombine(t *testing.T) {
 	require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
 
 	start := time.Now()
-	r.Before(receiptMethod)
+	r.Before(context.Background(), receiptMethod)
 	result, err := truth()
 	result, err = r.After(receiptMethod, result, err)
 
@@ -282,7 +283,7 @@ func TestParseType(t *testing.T) {
 func TestNilRegistryIsSafe(t *testing.T) {
 	var r *Registry
 
-	assert.NotPanics(t, func() { r.Before(receiptMethod) })
+	assert.NotPanics(t, func() { r.Before(context.Background(), receiptMethod) })
 	assert.NotPanics(t, func() { r.Clear() })
 	assert.NotPanics(t, func() {
 		require.NoError(t, r.Enable(NewFault(receiptMethod, FalseNull, 0, 0)))
@@ -301,7 +302,7 @@ func TestOverlappingDelaysTakeTheLongest(t *testing.T) {
 	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 80*time.Millisecond)))
 
 	start := time.Now()
-	r.Before(receiptMethod)
+	r.Before(context.Background(), receiptMethod)
 	elapsed := time.Since(start)
 
 	assert.GreaterOrEqual(t, elapsed, 80*time.Millisecond)
@@ -316,10 +317,10 @@ func TestOnlyTheAppliedDelaySpendsBudget(t *testing.T) {
 	require.NoError(t, r.Enable(short))
 	require.NoError(t, r.Enable(long))
 
-	r.Before(receiptMethod) // the long one wins and is spent
+	r.Before(context.Background(), receiptMethod) // the long one wins and is spent
 
 	start := time.Now()
-	r.Before(receiptMethod) // long is spent; the short one should still fire
+	r.Before(context.Background(), receiptMethod) // long is spent; the short one should still fire
 	elapsed := time.Since(start)
 	assert.Less(t, elapsed, 20*time.Millisecond, "the spent long delay must not fire again")
 }
@@ -338,4 +339,38 @@ func TestEnableReapsSpentFaults(t *testing.T) {
 	held := len(r.faults)
 	r.mu.RUnlock()
 	assert.LessOrEqual(t, held, 2, "spent faults should not accumulate, holding %d", held)
+}
+
+// A delay must not outlive its request: cancelling the context ends the wait
+// immediately. Without this a long delay holds up shutdown (making a clean
+// signal look like a crash) and blocks a WebSocket connection's read loop.
+func TestDelayIsInterruptedByContext(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 30*time.Second)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	r.Before(ctx, receiptMethod)
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 2*time.Second, "cancelling should end the delay, not wait it out")
+	assert.GreaterOrEqual(t, elapsed, 20*time.Millisecond)
+}
+
+// An already-cancelled context skips the wait entirely.
+func TestDelayReturnsImmediatelyOnCancelledContext(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Enable(NewFault(receiptMethod, Delay, 0, 10*time.Second)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	r.Before(ctx, receiptMethod)
+	assert.Less(t, time.Since(start), time.Second)
 }

@@ -1,6 +1,7 @@
 package faults_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func newStack(t *testing.T) (*rpc.Handler, *chain.Driver, *faults.Registry) {
 func call(t *testing.T, h *rpc.Handler, body string) resp {
 	t.Helper()
 	var out resp
-	require.NoError(t, json.Unmarshal(h.ServeRPC([]byte(body)), &out))
+	require.NoError(t, json.Unmarshal(h.ServeRPC(context.Background(), []byte(body)), &out))
 	assert.Equal(t, "2.0", out.JSONRPC)
 	return out
 }
@@ -114,7 +115,7 @@ func TestFaultAppliesInsideBatch(t *testing.T) {
 	          {"jsonrpc":"2.0","id":2,"method":"eth_blockNumber"}]`
 
 	var out []resp
-	require.NoError(t, json.Unmarshal(h.ServeRPC([]byte(body)), &out))
+	require.NoError(t, json.Unmarshal(h.ServeRPC(context.Background(), []byte(body)), &out))
 	require.Len(t, out, 2)
 
 	byID := map[string]string{}
@@ -190,4 +191,66 @@ func TestTypedNilRegistryIsAPassThrough(t *testing.T) {
 		require.Nil(t, out.Error)
 		assert.Equal(t, `"0x1"`, string(out.Result))
 	})
+}
+
+// A delay must slow a call down without also making it answer from a stale
+// view: the snapshot is taken after the wait, so a block produced during the
+// delay is visible. Otherwise delay would quietly inject a second, undeclared
+// lie whose output is indistinguishable from false_200.
+func TestDelayAnswersFromAFreshSnapshot(t *testing.T) {
+	h, d, reg := newStack(t)
+	require.NoError(t, reg.Enable(faults.NewFault("eth_blockNumber", faults.Delay, 0, 150*time.Millisecond)))
+
+	// Mine while the request is sleeping.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		for range 3 {
+			d.ProduceBlock(nil)
+		}
+	}()
+
+	out := call(t, h, `{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`)
+	require.Nil(t, out.Error)
+	assert.Equal(t, `"0x3"`, string(out.Result), "the answer must reflect blocks mined during the delay")
+}
+
+// A cancelled request context stops the delay rather than waiting it out.
+func TestServeRPCHonoursContextCancellation(t *testing.T) {
+	h, d, reg := newStack(t)
+	d.ProduceBlock(nil)
+	require.NoError(t, reg.Enable(faults.NewFault("eth_blockNumber", faults.Delay, 0, 30*time.Second)))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := h.ServeRPC(ctx, []byte(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`))
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 2*time.Second, "a cancelled request must not wait out a 30s delay")
+	assert.Contains(t, string(out), `"0x1"`)
+}
+
+// One snapshot per message still holds: every entry of a batch sees the same
+// chain state even though the snapshot is now taken lazily.
+func TestBatchStillSharesOneSnapshot(t *testing.T) {
+	h, d, _ := newStack(t)
+	for range 2 {
+		d.ProduceBlock(nil)
+	}
+
+	body := `[{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"},
+	          {"jsonrpc":"2.0","id":2,"method":"eth_getBlockByNumber","params":["latest",false]}]`
+
+	var out []resp
+	require.NoError(t, json.Unmarshal(h.ServeRPC(context.Background(), []byte(body)), &out))
+	require.Len(t, out, 2)
+
+	byID := map[string]string{}
+	for _, r := range out {
+		require.Nil(t, r.Error)
+		byID[string(r.ID)] = string(r.Result)
+	}
+	assert.Equal(t, `"0x2"`, byID["1"])
+	assert.Contains(t, byID["2"], `"number":"0x2"`, "latest must agree with blockNumber in the same batch")
 }

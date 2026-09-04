@@ -1,27 +1,29 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
 )
 
-func (h *Handler) ethBlockNumber(s *chain.ChainSnapshot, _ []json.RawMessage) (any, *RPCError) {
+func (h *Handler) ethBlockNumber(_ context.Context, g snapshotGetter, _ []json.RawMessage) (any, *RPCError) {
+	s := g.snapshot()
 	return encodeUint64(s.Height()), nil
 }
 
-func (h *Handler) ethChainID(s *chain.ChainSnapshot, _ []json.RawMessage) (any, *RPCError) {
+func (h *Handler) ethChainID(_ context.Context, _ snapshotGetter, _ []json.RawMessage) (any, *RPCError) {
 	return encodeUint64(h.chainID), nil
 }
 
-func (h *Handler) netVersion(s *chain.ChainSnapshot, _ []json.RawMessage) (any, *RPCError) {
+func (h *Handler) netVersion(_ context.Context, _ snapshotGetter, _ []json.RawMessage) (any, *RPCError) {
 	return strconv.FormatUint(h.chainID, 10), nil
 }
 
 // ethGetBlockByNumber implements eth_getBlockByNumber. params = [tag|hex, fullTx].
 // v0.1: fullTx (params[1]) is ignored — transactions are always returned as hashes (Refs #3).
-func (h *Handler) ethGetBlockByNumber(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
+func (h *Handler) ethGetBlockByNumber(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
 	if len(params) < 1 {
 		return nil, errInvalidParams("missing block number")
 	}
@@ -29,6 +31,7 @@ func (h *Handler) ethGetBlockByNumber(s *chain.ChainSnapshot, params []json.RawM
 	if err := json.Unmarshal(params[0], &tag); err != nil {
 		return nil, errInvalidParams("block number must be a string")
 	}
+	s := g.snapshot()
 	height, err := resolveHeight(s, tag)
 	if err != nil {
 		return nil, errInvalidParams("invalid block number")
@@ -42,7 +45,7 @@ func (h *Handler) ethGetBlockByNumber(s *chain.ChainSnapshot, params []json.RawM
 
 // ethGetBlockByHash implements eth_getBlockByHash. params = [blockHash, fullTx].
 // v0.1: fullTx (params[1]) is ignored — transactions are always returned as hashes (Refs #3).
-func (h *Handler) ethGetBlockByHash(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
+func (h *Handler) ethGetBlockByHash(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
 	if len(params) < 1 {
 		return nil, errInvalidParams("missing block hash")
 	}
@@ -54,14 +57,14 @@ func (h *Handler) ethGetBlockByHash(s *chain.ChainSnapshot, params []json.RawMes
 	if err != nil {
 		return nil, errInvalidParams("invalid block hash")
 	}
-	blk := s.ByHash(hash)
+	blk := g.snapshot().ByHash(hash)
 	if blk == nil {
 		return nil, nil // JSON null
 	}
 	return toRPCBlock(blk), nil
 }
 
-func (h *Handler) ethGetTransactionReceipt(s *chain.ChainSnapshot, params []json.RawMessage) (any, *RPCError) {
+func (h *Handler) ethGetTransactionReceipt(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
 	if len(params) < 1 {
 		return nil, errInvalidParams("missing transaction hash")
 	}
@@ -73,7 +76,7 @@ func (h *Handler) ethGetTransactionReceipt(s *chain.ChainSnapshot, params []json
 	if err != nil {
 		return nil, errInvalidParams("invalid transaction hash")
 	}
-	blk := s.BlockByTx(txHash)
+	blk := g.snapshot().BlockByTx(txHash)
 	if blk == nil {
 		return nil, nil // JSON null: unknown or orphaned tx
 	}

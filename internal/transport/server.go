@@ -23,14 +23,23 @@ type Server struct {
 	headSource HeadSource
 	httpSrv    *http.Server
 
+	// baseCtx is the parent of every request context; cancelling it on shutdown
+	// releases work that would otherwise be waited out — an injected delay
+	// fault, for instance, which would make a clean signal look like a crash.
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+
 	connMu sync.Mutex
 	conns  map[*wsConn]struct{}
 }
 
 func NewServer(rpc *rpc.Handler, headSource HeadSource) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
 		rpc:        rpc,
 		headSource: headSource,
+		baseCtx:    ctx,
+		baseCancel: cancel,
 		conns:      make(map[*wsConn]struct{}),
 	}
 	// Built here rather than in Start: Start usually runs on its own goroutine,
@@ -39,6 +48,7 @@ func NewServer(rpc *rpc.Handler, headSource HeadSource) *Server {
 	s.httpSrv = &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return s.baseCtx },
 	}
 	return s
 }
@@ -63,6 +73,10 @@ func (s *Server) Start(addr string) error {
 // connections are hijacked, so http.Server never touches them: they are closed
 // here, which ends their read loops and pump goroutines.
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Ask in-flight work to stop before draining: http.Server.Shutdown only
+	// waits for handlers to return, so an injected delay would otherwise run to
+	// completion and blow the caller's deadline.
+	s.baseCancel()
 	s.closeAllConns()
 	return s.httpSrv.Shutdown(ctx)
 }

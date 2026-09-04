@@ -1,6 +1,7 @@
 package faults
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -130,7 +131,9 @@ func (r *Registry) Clear() {
 
 // Before runs on the request path. Overlapping delays do not add up: the
 // longest matching delay wins, and only that fault spends a unit of its count.
-func (r *Registry) Before(method string) {
+// The wait is interruptible — a delay that outlives its request would otherwise
+// hold up shutdown and, on a WebSocket, block the whole connection's read loop.
+func (r *Registry) Before(ctx context.Context, method string) {
 	if r == nil {
 		return
 	}
@@ -142,7 +145,12 @@ func (r *Registry) Before(method string) {
 		}
 	}
 	if longest != nil && longest.consume() {
-		time.Sleep(longest.Delay)
+		timer := time.NewTimer(longest.Delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		}
 	}
 }
 

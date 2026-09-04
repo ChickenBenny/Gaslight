@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -542,4 +543,60 @@ func TestWSRejectsOversizedMessage(t *testing.T) {
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 	_, _, err := conn.ReadMessage()
 	assert.Error(t, err, "oversized frame should close the connection")
+}
+
+// Shutdown must not be held up by work a fault made slow: http.Server.Shutdown
+// only waits for handlers to return, so an in-flight request has to be told to
+// stop. Otherwise a clean signal blows the caller's deadline and the process
+// reports failure.
+//
+// This drives the server's own http.Server rather than httptest, because
+// httptest supplies its own and would bypass the BaseContext under test.
+func TestShutdownCancelsInFlightRequests(t *testing.T) {
+	d := chain.NewDriver(1)
+	s := NewServer(rpc.New(d, 1, blockingFaults{}), d)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = s.httpSrv.Serve(ln) }()
+	url := "http://" + ln.Addr().String()
+
+	done := make(chan struct{})
+	go func() {
+		resp, err := http.Post(url, "application/json",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}`))
+		if err == nil {
+			resp.Body.Close()
+		}
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond) // let the request reach the fault
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	assert.NoError(t, s.Shutdown(ctx), "shutdown should not time out waiting on an injected delay")
+	assert.Less(t, time.Since(start), 2*time.Second)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the in-flight request never returned")
+	}
+}
+
+// blockingFaults stalls every call until its context is cancelled, standing in
+// for a long delay fault.
+type blockingFaults struct{}
+
+func (blockingFaults) Before(ctx context.Context, _ string) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(30 * time.Second):
+	}
+}
+
+func (blockingFaults) After(_ string, result any, err *rpc.RPCError) (any, *rpc.RPCError) {
+	return result, err
 }
