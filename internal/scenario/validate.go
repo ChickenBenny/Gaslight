@@ -1,0 +1,248 @@
+package scenario
+
+import (
+	"fmt"
+	"math/big"
+	"strings"
+	"time"
+
+	"github.com/ChickenBenny/Gaslight/internal/faults"
+)
+
+// validate rejects a scenario that would not perform the run it describes. A
+// chaos tool's worst outcome is a green run against a fault that never fired,
+// so every rejection names the location and the offending value.
+func (s *Scenario) validate() error {
+	if strings.TrimSpace(s.Name) == "" {
+		return fmt.Errorf("scenario: name is required")
+	}
+	if len(s.Timeline) == 0 {
+		return fmt.Errorf("scenario: timeline is empty")
+	}
+
+	// txIDs accumulates as produce events are seen. Because the timeline is
+	// non-decreasing, a reorg can only reference txs defined before it, so one
+	// pass is enough.
+	txIDs := map[string]bool{}
+
+	// height models where the chain stands as the timeline plays out, which is
+	// what the branch arithmetic has to be checked against. It is usually just
+	// at_height, since the engine fills the gap before an event with empty
+	// blocks — but a reorg leaves the chain at the tip of its new branch, and
+	// nothing lowers the height again, so a later event can find the chain
+	// already past its own at_height.
+	var prevAt, height uint64
+
+	for i, e := range s.Timeline {
+		where := fmt.Sprintf("timeline[%d]", i)
+
+		if e.AtHeight == 0 {
+			return fmt.Errorf("%s: at_height 0 is genesis and cannot host an event", where)
+		}
+		if e.AtHeight < prevAt {
+			return fmt.Errorf("%s: at_height %d is out of order (previous was %d)", where, e.AtHeight, prevAt)
+		}
+		prevAt = e.AtHeight
+
+		if err := validateOneAction(where, e); err != nil {
+			return err
+		}
+
+		// Every action but produce waits for the chain to reach at_height.
+		// Produce is the one that appends the block at at_height itself, so it
+		// needs the chain still below.
+		if e.Produce != nil {
+			if e.AtHeight <= height {
+				return fmt.Errorf("%s: produce targets height %d but the chain already stands at %d",
+					where, e.AtHeight, height)
+			}
+		} else if e.AtHeight > height {
+			height = e.AtHeight
+		}
+
+		switch {
+		case e.Produce != nil:
+			if err := validateProduce(where, e.Produce, txIDs); err != nil {
+				return err
+			}
+			height = e.AtHeight
+		case e.Reorg != nil:
+			newHead, err := validateReorg(where, height, e.Reorg, txIDs)
+			if err != nil {
+				return err
+			}
+			height = newHead
+		case e.Finalize != nil:
+			if e.Finalize.Height > height {
+				return fmt.Errorf("%s: finalize height %d is above the height at that point (%d)",
+					where, e.Finalize.Height, height)
+			}
+		case e.Fault != nil:
+			if err := validateFault(where, e.Fault); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.EndAtHeight > 0 && s.EndAtHeight < height {
+		return fmt.Errorf("scenario: end_at_height %d is below the height the timeline reaches (%d)",
+			s.EndAtHeight, height)
+	}
+	return nil
+}
+
+// validateOneAction requires exactly one action per event, and names the
+// offenders when there are several.
+func validateOneAction(where string, e Event) error {
+	var given []string
+	for _, a := range []struct {
+		name    string
+		present bool
+	}{
+		{"produce", e.Produce != nil},
+		{"reorg", e.Reorg != nil},
+		{"finalize", e.Finalize != nil},
+		{"fault", e.Fault != nil},
+		{"clear_faults", e.ClearFaults != nil},
+	} {
+		if a.present {
+			given = append(given, a.name)
+		}
+	}
+
+	switch len(given) {
+	case 0:
+		return fmt.Errorf("%s: no action given (expected one of produce, reorg, finalize, fault, "+
+			"clear_faults; an action with no fields needs an explicit \"{}\")", where)
+	case 1:
+		return nil
+	default:
+		return fmt.Errorf("%s: multiple actions given (%s) — an event does exactly one thing",
+			where, strings.Join(given, ", "))
+	}
+}
+
+func validateProduce(where string, p *ProduceAction, txIDs map[string]bool) error {
+	if len(p.Txs) == 0 {
+		return fmt.Errorf("%s: produce requires at least one entry in txs", where)
+	}
+	for j, tx := range p.Txs {
+		w := fmt.Sprintf("%s.produce.txs[%d]", where, j)
+
+		// Whitespace is rejected rather than trimmed: an id is referenced by
+		// name elsewhere in the file, and " dep" would silently fail to match.
+		if err := requireBareName(w, "id", tx.ID); err != nil {
+			return err
+		}
+		if txIDs[tx.ID] {
+			return fmt.Errorf("%s: duplicate tx id %q", w, tx.ID)
+		}
+		txIDs[tx.ID] = true
+
+		if err := requireBareName(w, "from", tx.From); err != nil {
+			return err
+		}
+		if err := requireBareName(w, "to", tx.To); err != nil {
+			return err
+		}
+		if err := validateValue(w, tx.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateReorg checks the branch arithmetic against the height the chain
+// stands at when the event runs, and returns the height it leaves behind: the
+// tip of the new branch. A branch that does not outgrow the chain would lose
+// the fork choice and the reorg would quietly not happen, so it is rejected
+// here rather than at run time.
+func validateReorg(where string, height uint64, r *ReorgAction, txIDs map[string]bool) (uint64, error) {
+	if r.BranchLength < 1 {
+		return 0, fmt.Errorf("%s: reorg branch_length must be at least 1", where)
+	}
+	if r.ForkFrom > height {
+		return 0, fmt.Errorf("%s: reorg fork_from %d is above the height at that point (%d)",
+			where, r.ForkFrom, height)
+	}
+
+	newHead := r.ForkFrom + uint64(r.BranchLength)
+	if newHead <= height {
+		return 0, fmt.Errorf("%s: reorg does not outgrow the chain (new head would be %d, current is %d)",
+			where, newHead, height)
+	}
+
+	for j, b := range r.Txs {
+		w := fmt.Sprintf("%s.reorg.txs[%d]", where, j)
+		lo := r.ForkFrom + 1
+		if b.AtHeight < lo || b.AtHeight > newHead {
+			return 0, fmt.Errorf("%s: at_height %d is outside the new branch (%d..%d)", w, b.AtHeight, lo, newHead)
+		}
+		for _, id := range b.IDs {
+			if !txIDs[id] {
+				return 0, fmt.Errorf("%s: unknown tx id %q", w, id)
+			}
+		}
+	}
+	return newHead, nil
+}
+
+func validateFault(where string, f *FaultAction) error {
+	if err := requireBareName(where, "fault method", f.Method); err != nil {
+		return err
+	}
+
+	t, err := faults.ParseType(f.Type)
+	if err != nil {
+		return fmt.Errorf("%s: fault type %q is not recognised (expected %q or %q)",
+			where, f.Type, faults.FalseNull, faults.Delay)
+	}
+	if f.Count < 0 {
+		return fmt.Errorf("%s: fault count %d must not be negative (0 means unlimited)", where, f.Count)
+	}
+
+	if t == faults.Delay {
+		if f.Delay == "" {
+			return fmt.Errorf("%s: a delay fault requires delay (for example 500ms)", where)
+		}
+		d, err := time.ParseDuration(f.Delay)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("%s: delay %q is not a positive duration", where, f.Delay)
+		}
+		return nil
+	}
+
+	// Anything other than a delay fault ignores the field, so accepting it
+	// would leave the author believing they had injected latency.
+	if f.Delay != "" {
+		return fmt.Errorf("%s: delay %q is only meaningful for a delay fault, not %s", where, f.Delay, f.Type)
+	}
+	return nil
+}
+
+// requireBareName rejects an empty value and one carrying surrounding
+// whitespace, which YAML preserves inside quotes and which would break the
+// name-based lookups this file relies on.
+func requireBareName(where, field, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s: %s is required", where, field)
+	}
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("%s: %s %q must not have surrounding whitespace", where, field, value)
+	}
+	return nil
+}
+
+func validateValue(where, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s: value is required", where)
+	}
+	v, ok := new(big.Int).SetString(value, 10)
+	if !ok {
+		return fmt.Errorf("%s: value %q is not a base-10 integer", where, value)
+	}
+	if v.Sign() < 0 {
+		return fmt.Errorf("%s: value %q is negative", where, value)
+	}
+	return nil
+}
