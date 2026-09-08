@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ChickenBenny/Gaslight/internal/faults"
+	"github.com/ChickenBenny/Gaslight/internal/rpc"
 )
 
 // validate rejects a scenario that would not perform the run it describes. A
@@ -25,13 +26,14 @@ func (s *Scenario) validate() error {
 	// pass is enough.
 	txIDs := map[string]bool{}
 
-	// height models where the chain stands as the timeline plays out, which is
-	// what the branch arithmetic has to be checked against. It is usually just
-	// at_height, since the engine fills the gap before an event with empty
-	// blocks — but a reorg leaves the chain at the tip of its new branch, and
-	// nothing lowers the height again, so a later event can find the chain
-	// already past its own at_height.
-	var prevAt, height uint64
+	// height and finalized model the chain as the timeline plays out, which is
+	// what the checks below have to run against rather than each event's own
+	// at_height. height is usually at_height, since the engine fills the gap
+	// before an event with empty blocks — but a reorg leaves the chain at the
+	// tip of its new branch and nothing lowers it again, so a later event can
+	// find the chain already past its own at_height. finalized only ever rises,
+	// and is the floor a reorg may not reach below.
+	var prevAt, height, finalized uint64
 
 	for i, e := range s.Timeline {
 		where := fmt.Sprintf("timeline[%d]", i)
@@ -67,7 +69,7 @@ func (s *Scenario) validate() error {
 			}
 			height = e.AtHeight
 		case e.Reorg != nil:
-			newHead, err := validateReorg(where, height, e.Reorg, txIDs)
+			newHead, err := validateReorg(where, height, finalized, e.Reorg, txIDs)
 			if err != nil {
 				return err
 			}
@@ -77,6 +79,14 @@ func (s *Scenario) validate() error {
 				return fmt.Errorf("%s: finalize height %d is above the height at that point (%d)",
 					where, e.Finalize.Height, height)
 			}
+			// Driver.Finalize returns ErrHeightTooLow rather than moving the
+			// watermark back down, so a scenario that tries is not the run it
+			// describes.
+			if e.Finalize.Height < finalized {
+				return fmt.Errorf("%s: finalize height %d is below the finalized height already reached (%d), "+
+					"and the watermark only moves up", where, e.Finalize.Height, finalized)
+			}
+			finalized = e.Finalize.Height
 		case e.Fault != nil:
 			if err := validateFault(where, e.Fault); err != nil {
 				return err
@@ -152,18 +162,26 @@ func validateProduce(where string, p *ProduceAction, txIDs map[string]bool) erro
 	return nil
 }
 
-// validateReorg checks the branch arithmetic against the height the chain
-// stands at when the event runs, and returns the height it leaves behind: the
-// tip of the new branch. A branch that does not outgrow the chain would lose
-// the fork choice and the reorg would quietly not happen, so it is rejected
-// here rather than at run time.
-func validateReorg(where string, height uint64, r *ReorgAction, txIDs map[string]bool) (uint64, error) {
+// validateReorg checks the branch against the state the chain is in when the
+// event runs, and returns the height it leaves behind: the tip of the new
+// branch. A branch that does not outgrow the chain would lose the fork choice
+// and the reorg would quietly not happen; one that reaches below the finalized
+// height is refused by the driver. Both are rejected here instead.
+func validateReorg(where string, height, finalized uint64, r *ReorgAction, txIDs map[string]bool) (uint64, error) {
 	if r.BranchLength < 1 {
 		return 0, fmt.Errorf("%s: reorg branch_length must be at least 1", where)
 	}
 	if r.ForkFrom > height {
 		return 0, fmt.Errorf("%s: reorg fork_from %d is above the height at that point (%d)",
 			where, r.ForkFrom, height)
+	}
+	// Matches Driver.Reorg, which returns ErrReorgBelowFinalized: forking at
+	// the watermark is allowed, below it is not. A finalized block being
+	// reorged away is the one thing finality rules out, so a scenario asking
+	// for it is describing a chain that cannot exist.
+	if r.ForkFrom < finalized {
+		return 0, fmt.Errorf("%s: reorg fork_from %d is below the finalized height (%d), "+
+			"which no reorg may reach past", where, r.ForkFrom, finalized)
 	}
 
 	newHead := r.ForkFrom + uint64(r.BranchLength)
@@ -172,16 +190,35 @@ func validateReorg(where string, height uint64, r *ReorgAction, txIDs map[string
 			where, newHead, height)
 	}
 
+	// The branch is built as one tx list per position, so two entries on one
+	// height would collapse into one and a repeated id would put the same
+	// transaction on the canonical chain twice.
+	seenHeight := map[uint64]bool{}
+	seenID := map[string]bool{}
+
 	for j, b := range r.Txs {
 		w := fmt.Sprintf("%s.reorg.txs[%d]", where, j)
 		lo := r.ForkFrom + 1
 		if b.AtHeight < lo || b.AtHeight > newHead {
 			return 0, fmt.Errorf("%s: at_height %d is outside the new branch (%d..%d)", w, b.AtHeight, lo, newHead)
 		}
+		if seenHeight[b.AtHeight] {
+			return 0, fmt.Errorf("%s: at_height %d is given twice in this branch", w, b.AtHeight)
+		}
+		seenHeight[b.AtHeight] = true
+
+		if len(b.IDs) == 0 {
+			return 0, fmt.Errorf("%s: ids is empty, and a branch block is empty already unless ids places "+
+				"transactions in it", w)
+		}
 		for _, id := range b.IDs {
 			if !txIDs[id] {
 				return 0, fmt.Errorf("%s: unknown tx id %q", w, id)
 			}
+			if seenID[id] {
+				return 0, fmt.Errorf("%s: tx id %q is placed twice in this branch", w, id)
+			}
+			seenID[id] = true
 		}
 	}
 	return newHead, nil
@@ -190,6 +227,13 @@ func validateReorg(where string, height uint64, r *ReorgAction, txIDs map[string
 func validateFault(where string, f *FaultAction) error {
 	if err := requireBareName(where, "fault method", f.Method); err != nil {
 		return err
+	}
+	// Only served methods are wrapped with the fault check, so a fault on any
+	// other name registers, fires zero times, and the run goes green having
+	// thrown nothing at the client.
+	if f.Method != faults.AllMethods && !rpc.Serves(f.Method) {
+		return fmt.Errorf("%s: fault method %q is not served (expected %q or one of %s)",
+			where, f.Method, faults.AllMethods, strings.Join(rpc.Methods, ", "))
 	}
 
 	t, err := faults.ParseType(f.Type)

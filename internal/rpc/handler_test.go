@@ -343,3 +343,23 @@ func TestServeGetTransactionReceiptOrphaned(t *testing.T) {
 	require.Nil(t, r.Error)
 	assert.Equal(t, "null", string(r.Result))
 }
+
+// Methods is exported so a caller can reject a fault aimed at a method that
+// would never be consulted, which only works while the list and the handler
+// agree. Nothing in New forces that, so it is pinned here.
+func TestMethodsMatchesTheHandler(t *testing.T) {
+	h, _ := newHandler(1)
+
+	served := make([]string, 0, len(h.methods))
+	for name := range h.methods {
+		served = append(served, name)
+	}
+	assert.ElementsMatch(t, Methods, served,
+		"rpc.Methods must list exactly what New wraps")
+
+	for _, m := range Methods {
+		assert.True(t, Serves(m), "Serves should accept %q", m)
+	}
+	assert.False(t, Serves("eth_getTransactionReciept"), "a typo must not pass")
+	assert.False(t, Serves(""))
+}

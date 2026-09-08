@@ -13,10 +13,13 @@ import (
 // Parse reads a scenario and rejects anything that would not perform the run it
 // describes.
 //
-// Unknown fields are errors rather than being ignored: yaml drops keys it does
-// not recognise, so a mistyped "producee:" would otherwise parse into an event
-// with no action at all, and the scenario would run green having done nothing.
-// A comment belongs in a "#" line, not in a stray field.
+// Anything the file says that would not take effect is an error rather than
+// being ignored, because a scenario that quietly does less than it says is a
+// green run against nothing. So unknown fields are rejected — yaml drops keys
+// it does not recognise, and a mistyped "producee:" would otherwise parse into
+// an event with no action at all — and so is a second yaml document, which
+// Decode would leave unread. A comment belongs in a "#" line, not in a stray
+// field or a trailing document.
 func Parse(data []byte) (*Scenario, error) {
 	var s Scenario
 
@@ -28,6 +31,18 @@ func Parse(data []byte) (*Scenario, error) {
 		}
 		// The yaml package prefixes its own errors, so this only adds ours.
 		return nil, fmt.Errorf("scenario: %w", err)
+	}
+
+	var extra Scenario
+	switch err := dec.Decode(&extra); {
+	case errors.Is(err, io.EOF):
+		// The only acceptable outcome: there was nothing after the first
+		// document.
+	case err != nil:
+		return nil, fmt.Errorf("scenario: %w", err)
+	default:
+		return nil, fmt.Errorf("scenario: yaml: the file holds more than one document and only the "+
+			"first would run (found %q after a \"---\" separator)", extra.Name)
 	}
 
 	if s.ChainID == 0 {

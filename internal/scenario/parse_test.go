@@ -227,3 +227,35 @@ func TestParseRejectsAnEmptyFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }
+
+// Decode reads one document per call, so a stray "---" would leave the whole
+// second half unread — the same silent-drop hazard KnownFields(true) is here
+// to kill, and an easy accident when two scenarios get concatenated.
+func TestParseRejectsASecondDocument(t *testing.T) {
+	_, err := Parse([]byte(`
+name: first
+timeline:
+  - at_height: 1
+    fault: {method: "*", type: false_200}
+---
+name: second
+timeline:
+  - at_height: 2
+    produce: {txs: [{id: t, from: a, to: b, value: "1"}]}
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "more than one document")
+	assert.Contains(t, err.Error(), "second", "the error should name the document that would be dropped")
+}
+
+// A leading "---" is how one document may legally open, and must still parse.
+func TestParseAllowsALeadingDocumentMarker(t *testing.T) {
+	s, err := Parse([]byte(`---
+name: marked
+timeline:
+  - at_height: 1
+    finalize: {height: 1}
+`))
+	require.NoError(t, err)
+	assert.Equal(t, "marked", s.Name)
+}

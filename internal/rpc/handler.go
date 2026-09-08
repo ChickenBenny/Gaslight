@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
@@ -52,6 +53,24 @@ type RPCResponse struct {
 	ID      json.RawMessage `json:"id"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *RPCError       `json:"error,omitempty"`
+}
+
+// Methods lists what this handler answers. A fault registered on anything
+// else can never fire, since only these names are wrapped, so callers that
+// accept a method name from a user check it with Serves first. Kept in step
+// with New by TestMethodsMatchesTheHandler.
+var Methods = []string{
+	"eth_blockNumber",
+	"eth_chainId",
+	"net_version",
+	"eth_getBlockByNumber",
+	"eth_getBlockByHash",
+	"eth_getTransactionReceipt",
+}
+
+// Serves reports whether this handler answers the named method.
+func Serves(method string) bool {
+	return slices.Contains(Methods, method)
 }
 
 func New(src SnapshotSource, chainID uint64, fs FaultSource) *Handler {

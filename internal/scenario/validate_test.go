@@ -259,6 +259,92 @@ timeline:
 			want: []string{"finalize", "9"},
 		},
 		{
+			// Driver.Reorg returns ErrReorgBelowFinalized, so this would fail
+			// mid-run. It is also the shape an author reaches for when trying
+			// to write "a reorg eats a finalized deposit", which finality
+			// makes impossible.
+			name: "reorg reaches below a finalized height",
+			yaml: `
+name: s
+timeline:
+  - at_height: 10
+    finalize: {height: 9}
+  - at_height: 11
+    reorg:
+      fork_from: 4
+      branch_length: 8`,
+			want: []string{"timeline[1]", "fork_from", "finalized", "9"},
+		},
+		{
+			name: "finalize moves the watermark backwards",
+			yaml: `
+name: s
+timeline:
+  - at_height: 10
+    finalize: {height: 9}
+  - at_height: 11
+    finalize: {height: 3}`,
+			want: []string{"timeline[1]", "finalize", "3", "9"},
+		},
+		{
+			// A fault on a method the handler does not serve is never
+			// consulted, so it registers, fires nothing, and the run is green.
+			name: "fault on a method that is not served",
+			yaml: `
+name: s
+timeline:
+  - at_height: 1
+    fault: {method: eth_getTransactionReciept, type: false_200}`,
+			want: []string{"eth_getTransactionReciept", "not served", "eth_getTransactionReceipt"},
+		},
+		{
+			name: "two reorg branch blocks on one height",
+			yaml: `
+name: s
+timeline:
+  - at_height: 2
+    produce:
+      txs: [{id: d1, from: a, to: b, value: "1"}, {id: d2, from: a, to: b, value: "1"}]
+  - at_height: 4
+    reorg:
+      fork_from: 3
+      branch_length: 3
+      txs:
+        - {at_height: 4, ids: [d1]}
+        - {at_height: 4, ids: [d2]}`,
+			want: []string{"txs[1]", "at_height", "4", "twice"},
+		},
+		{
+			name: "one tx placed in two reorg branch blocks",
+			yaml: `
+name: s
+timeline:
+  - at_height: 2
+    produce:
+      txs: [{id: d1, from: a, to: b, value: "1"}]
+  - at_height: 4
+    reorg:
+      fork_from: 3
+      branch_length: 3
+      txs:
+        - {at_height: 4, ids: [d1]}
+        - {at_height: 5, ids: [d1]}`,
+			want: []string{"txs[1]", "d1", "twice"},
+		},
+		{
+			name: "reorg branch block with an empty ids list",
+			yaml: `
+name: s
+timeline:
+  - at_height: 4
+    reorg:
+      fork_from: 3
+      branch_length: 3
+      txs:
+        - {at_height: 4, ids: []}`,
+			want: []string{"txs[0]", "ids", "empty"},
+		},
+		{
 			name: "fault with unknown type",
 			yaml: `
 name: s
@@ -402,6 +488,30 @@ timeline:
     reorg:
       fork_from: 4
       branch_length: 1`,
+		},
+		{
+			// Driver.Reorg refuses fork_from below the watermark, not at it,
+			// so the deepest legal reorg is the interesting boundary.
+			name: "forking exactly at the finalized watermark",
+			yaml: `
+name: s
+timeline:
+  - at_height: 10
+    finalize: {height: 6}
+  - at_height: 11
+    reorg:
+      fork_from: 6
+      branch_length: 6`,
+		},
+		{
+			name: "finalizing the same height twice",
+			yaml: `
+name: s
+timeline:
+  - at_height: 10
+    finalize: {height: 8}
+  - at_height: 12
+    finalize: {height: 8}`,
 		},
 		{
 			name: "finalizing the current head",
