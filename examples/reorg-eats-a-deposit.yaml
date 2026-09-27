@@ -1,0 +1,28 @@
+name: reorg-eats-a-deposit
+description: A deposit is confirmed, credited, then orphaned by a longer branch that omits it
+chain_id: 1337
+
+timeline:
+  - at_height: 3
+    produce:
+      txs:
+        - id: alice-deposit
+          from: alice
+          to: exchange
+          value: "1000000000000000000"
+
+  - at_height: 6
+    reorg:
+      fork_from: 2
+      branch_length: 5
+
+  - at_height: 6
+    fault:
+      method: eth_getTransactionReceipt
+      type: false_200
+      count: 1
+
+  - at_height: 9
+    clear_faults: {}
+
+end_at_height: 10
