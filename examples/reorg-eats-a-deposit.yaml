@@ -1,0 +1,34 @@
+name: reorg-eats-a-deposit
+description: >-
+  The node denies a deposit that is genuinely on chain, then a longer branch
+  takes it away for real. A client that reads the first null as "still pending"
+  never debits what it credited.
+chain_id: 1337
+
+timeline:
+  - at_height: 3
+    produce:
+      txs:
+        - id: alice-deposit
+          from: alice
+          to: exchange
+          value: "1000000000000000000"
+
+  # The deposit is canonical here, so this denial is a lie and the client can
+  # prove it by asking twice. The point is that the next null looks identical.
+  - at_height: 4
+    fault:
+      method: eth_getTransactionReceipt
+      type: false_200
+      count: 1
+
+  # Now it is true: the branch forks below the deposit and omits it.
+  - at_height: 6
+    reorg:
+      fork_from: 2
+      branch_length: 5
+
+  - at_height: 9
+    clear_faults: {}
+
+end_at_height: 10

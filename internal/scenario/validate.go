@@ -149,10 +149,10 @@ func validateProduce(where string, p *ProduceAction, txIDs map[string]bool) erro
 		}
 		txIDs[tx.ID] = true
 
-		if err := requireBareName(w, "from", tx.From); err != nil {
+		if err := requireAddress(w, "from", tx.From); err != nil {
 			return err
 		}
-		if err := requireBareName(w, "to", tx.To); err != nil {
+		if err := requireAddress(w, "to", tx.To); err != nil {
 			return err
 		}
 		if err := validateValue(w, tx.Value); err != nil {
@@ -260,6 +260,19 @@ func validateFault(where string, f *FaultAction) error {
 	// would leave the author believing they had injected latency.
 	if f.Delay != "" {
 		return fmt.Errorf("%s: delay %q is only meaningful for a delay fault, not %s", where, f.Delay, f.Type)
+	}
+	return nil
+}
+
+// requireAddress resolves the value the way the engine will, so a malformed
+// 0x form is a load-time error rather than one that stops a run halfway
+// through, with clients already watching the chain.
+func requireAddress(where, field, value string) error {
+	if err := requireBareName(where, field, value); err != nil {
+		return err
+	}
+	if _, err := resolveAddress(value); err != nil {
+		return fmt.Errorf("%s: %s: %w", where, field, err)
 	}
 	return nil
 }

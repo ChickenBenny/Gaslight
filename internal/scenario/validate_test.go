@@ -107,6 +107,29 @@ timeline:
 			want: []string{"dup", "duplicate"},
 		},
 		{
+			// The engine resolves addresses when the event runs, so a
+			// malformed one would stop a scenario halfway through rather than
+			// at load time, with clients already watching the chain.
+			name: "tx address is malformed hex",
+			yaml: `
+name: s
+timeline:
+  - at_height: 1
+    produce:
+      txs: [{id: t, from: alice, to: "0x1234", value: "1"}]`,
+			want: []string{"timeline[0]", "txs[0]", "to", "0x1234"},
+		},
+		{
+			name: "a symbolic name that looks like hex is not a new account",
+			yaml: `
+name: s
+timeline:
+  - at_height: 1
+    produce:
+      txs: [{id: t, from: "0xnope", to: b, value: "1"}]`,
+			want: []string{"from", "0xnope"},
+		},
+		{
 			name: "tx value is not a number",
 			yaml: `
 name: s
