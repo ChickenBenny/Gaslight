@@ -140,6 +140,19 @@ func TestExampleReorgEatsADeposit(t *testing.T) {
 	assert.Equal(t, "0x1", receipt.Status)
 	assert.Equal(t, "0x3", receipt.BlockNumber, "a client would credit this deposit")
 
+	// The fault is armed while the deposit is still canonical, so its denial
+	// is provably a lie. An event that produces no block runs on the tick
+	// after its height is reached, hence the extra step.
+	s.stepTo("0x4")
+	more, err := s.engine.Step()
+	require.NoError(t, err)
+	require.True(t, more)
+
+	assert.JSONEq(t, "null", string(s.call("eth_getTransactionReceipt", txHash)),
+		"the node denies a deposit that is on chain")
+	assert.Contains(t, string(s.call("eth_getTransactionReceipt", txHash)), `"blockNumber":"0x3"`,
+		"the budget was one call, so the truth comes back next")
+
 	s.drain()
 
 	// Height 3 is now a different block, and it does not carry the deposit.
@@ -166,19 +179,22 @@ func TestExampleNodeLiesAboutAReceipt(t *testing.T) {
 
 	s.stepTo("0x2")
 	txHash := s.blockByNumber("0x2").Transactions[0]
-	s.drain()
 
-	require.Equal(t, "0x2", s.blockByNumber("0x2").Number)
+	// The fault is armed before the deposit exists, so there is no tick in
+	// which the node answers honestly. Denials while the transaction did not
+	// exist cost nothing, because a fault does not spend its budget on a real
+	// null — so the full count is still here.
+	assert.JSONEq(t, "null", string(s.call("eth_getTransactionReceipt", txHash)),
+		"the very first call after the deposit lands is already denied")
+
+	s.drain()
 	assert.Len(t, s.blockByNumber("0x2").Transactions, 1, "the transaction never left the chain")
 
-	// count: 2, so the first two calls are denied and the third tells the truth.
-	for i := 1; i <= 4; i++ {
-		got := string(s.call("eth_getTransactionReceipt", txHash))
-		if i <= 2 {
-			assert.JSONEqf(t, "null", got, "call %d should have been denied", i)
-			continue
-		}
-		assert.Containsf(t, got, `"blockNumber":"0x2"`, "call %d should tell the truth", i)
+	// One denial is spent, so one is left before the truth returns.
+	assert.JSONEq(t, "null", string(s.call("eth_getTransactionReceipt", txHash)))
+	for i := 3; i <= 4; i++ {
+		assert.Containsf(t, string(s.call("eth_getTransactionReceipt", txHash)),
+			`"blockNumber":"0x2"`, "call %d should tell the truth", i)
 	}
 }
 

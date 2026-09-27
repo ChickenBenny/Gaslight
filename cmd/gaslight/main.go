@@ -19,12 +19,31 @@ import (
 	"github.com/ChickenBenny/Gaslight/internal/version"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout = 5 * time.Second
+
+	// A scenario cannot run at the flag's zero default, which means "never
+	// produce a block", so one is chosen rather than failing after the server
+	// has already started listening.
+	defaultScenarioBlockTime = time.Second
+)
+
+// flagGiven reports whether a flag was set on the command line, as opposed to
+// carrying its default.
+func flagGiven(name string) bool {
+	given := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
+}
 
 func main() {
 	addr := flag.String("addr", ":8545", "listen address")
 	chainID := flag.Uint64("chain-id", 1, "chain id")
-	blockTime := flag.Duration("block-time", 0, "produce a block every interval (0 = never)")
+	blockTime := flag.Duration("block-time", 0, "produce a block every interval (0 = never; a scenario defaults to 1s)")
 	scenarioPath := flag.String("scenario", "", "run a scenario file instead of producing empty blocks")
 	flag.Parse()
 
@@ -37,9 +56,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	// A scenario names the chain it simulates, and Parse defaults a missing
+	// chain_id to 1, so the file would always win. An explicitly given flag
+	// beats it, because a client configured for one id cannot talk to a node
+	// answering another.
 	id := *chainID
-	if sc != nil {
+	if sc != nil && !flagGiven("chain-id") {
 		id = sc.ChainID
+	}
+	if sc != nil && id != sc.ChainID {
+		log.Printf("serving chain id %d, overriding the scenario's %d", id, sc.ChainID)
+	}
+
+	if sc != nil && *blockTime <= 0 {
+		*blockTime = defaultScenarioBlockTime
+		log.Printf("no block time given, running the scenario at %s", *blockTime)
 	}
 
 	d := chain.NewDriver(id)

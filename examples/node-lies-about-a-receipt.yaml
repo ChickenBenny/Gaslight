@@ -1,8 +1,19 @@
 name: node-lies-about-a-receipt
-description: The transaction is on chain the whole time; the node denies it for the first two calls
+description: >-
+  The transaction is on chain the whole time and never reorged away, so every
+  null the node returns is a lie rather than a pending transaction.
 chain_id: 1337
 
 timeline:
+  # Armed before the deposit exists, so there is no window in which the node
+  # answers honestly. Denials on a transaction that does not exist yet cost
+  # nothing, because a fault does not spend its budget on a real null.
+  - at_height: 1
+    fault:
+      method: eth_getTransactionReceipt
+      type: false_200
+      count: 2
+
   - at_height: 2
     produce:
       txs:
@@ -10,11 +21,5 @@ timeline:
           from: alice
           to: exchange
           value: "1000000000000000000"
-
-  - at_height: 3
-    fault:
-      method: eth_getTransactionReceipt
-      type: false_200
-      count: 2
 
 end_at_height: 5
