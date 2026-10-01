@@ -4,11 +4,13 @@ package scenario
 // here is the wire shape, held as written in the file — values are strings so
 // that parsing and validation happen explicitly and can report what is wrong.
 type Scenario struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description,omitempty"`
-	ChainID     uint64  `yaml:"chain_id,omitempty"`
-	EndAtHeight uint64  `yaml:"end_at_height,omitempty"`
-	Timeline    []Event `yaml:"timeline"`
+	Name             string  `yaml:"name"`
+	Description      string  `yaml:"description,omitempty"`
+	ChainID          uint64  `yaml:"chain_id,omitempty"`
+	GenesisTimestamp *uint64 `yaml:"genesis_timestamp,omitempty"`
+	BlockInterval    *uint64 `yaml:"block_interval,omitempty"`
+	EndAtHeight      uint64  `yaml:"end_at_height,omitempty"`
+	Timeline         []Event `yaml:"timeline"`
 }
 
 // Event is one beat of the timeline: at a given height, exactly one action.

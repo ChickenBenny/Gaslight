@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ChickenBenny/Gaslight/internal/chain"
@@ -32,7 +34,7 @@ func newStack(t *testing.T, path string) (*stack, *scenario.Scenario) {
 	s, err := scenario.Load(path)
 	require.NoError(t, err, "the shipped example must load")
 
-	d := chain.NewDriver(s.ChainID)
+	d := chain.NewDriver(s.ChainID, clockOptions(s)...)
 	reg := faults.NewRegistry()
 	return &stack{
 		t:      t,
@@ -204,4 +206,59 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
+}
+
+// A chain whose blocks all claim the same moment is unusable for anything that
+// reads block time, so the timestamps have to reach the wire.
+func TestExampleBlocksCarryAMovingClock(t *testing.T) {
+	s, _ := newStack(t, filepath.Join(examplesDir, "reorg-eats-a-deposit.yaml"))
+	s.stepTo("0x3")
+
+	var prev uint64
+	for _, height := range []string{"0x0", "0x1", "0x2", "0x3"} {
+		var b struct {
+			Timestamp string `json:"timestamp"`
+		}
+		require.NoError(t, json.Unmarshal(s.call("eth_getBlockByNumber", height, false), &b))
+
+		ts, err := strconv.ParseUint(strings.TrimPrefix(b.Timestamp, "0x"), 16, 64)
+		require.NoError(t, err)
+		require.NotZerof(t, ts, "block %s still reports the epoch", height)
+
+		if prev != 0 {
+			assert.Equalf(t, uint64(12), ts-prev, "block %s should be one interval after its parent", height)
+		}
+		prev = ts
+	}
+}
+
+// The clock belongs to the scenario, not to how fast the simulation runs, so a
+// file can cover hours of block time in milliseconds of wall clock.
+func TestScenarioClockReachesTheWire(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clock.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: custom-clock
+genesis_timestamp: 1767225600
+block_interval: 300
+timeline:
+  - at_height: 2
+    produce:
+      txs: [{id: dep, from: alice, to: exchange, value: "1"}]
+end_at_height: 3
+`), 0o600))
+
+	s, _ := newStack(t, path)
+	s.drain()
+
+	for height, want := range map[string]string{
+		"0x0": "0x6955b900", // 2026-01-01 00:00:00
+		"0x1": "0x6955ba2c", // +5 minutes
+		"0x3": "0x6955bc84", // +15 minutes
+	} {
+		var b struct {
+			Timestamp string `json:"timestamp"`
+		}
+		require.NoError(t, json.Unmarshal(s.call("eth_getBlockByNumber", height, false), &b))
+		assert.Equalf(t, want, b.Timestamp, "block %s", height)
+	}
 }

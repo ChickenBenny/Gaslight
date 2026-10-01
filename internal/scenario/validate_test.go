@@ -368,6 +368,18 @@ timeline:
 			want: []string{"txs[0]", "ids", "empty"},
 		},
 		{
+			// A zero interval stops the clock, so every block would claim the
+			// same moment — the bug the clock exists to fix.
+			name: "block interval of zero",
+			yaml: `
+name: s
+block_interval: 0
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
+			want: []string{"block_interval", "0"},
+		},
+		{
 			name: "fault with unknown type",
 			yaml: `
 name: s
@@ -525,6 +537,16 @@ timeline:
     reorg:
       fork_from: 6
       branch_length: 6`,
+		},
+		{
+			name: "a chain that starts at the epoch",
+			yaml: `
+name: s
+genesis_timestamp: 0
+block_interval: 12
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
 		},
 		{
 			name: "finalizing the same height twice",

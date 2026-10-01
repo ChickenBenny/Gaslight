@@ -259,3 +259,48 @@ timeline:
 	require.NoError(t, err)
 	assert.Equal(t, "marked", s.Name)
 }
+
+// The chain's own clock is optional, and a pointer distinguishes "not given"
+// from "given as zero" — which matters because zero means opposite things for
+// the two fields.
+func TestParseClockFields(t *testing.T) {
+	s, err := Parse([]byte(`
+name: timed
+genesis_timestamp: 1767225600
+block_interval: 6
+timeline:
+  - at_height: 1
+    finalize: {height: 1}
+`))
+	require.NoError(t, err)
+	require.NotNil(t, s.GenesisTimestamp)
+	require.NotNil(t, s.BlockInterval)
+	assert.Equal(t, uint64(1767225600), *s.GenesisTimestamp)
+	assert.Equal(t, uint64(6), *s.BlockInterval)
+}
+
+func TestParseLeavesTheClockUnsetWhenOmitted(t *testing.T) {
+	s, err := Parse([]byte(`
+name: untimed
+timeline:
+  - at_height: 1
+    finalize: {height: 1}
+`))
+	require.NoError(t, err)
+	assert.Nil(t, s.GenesisTimestamp, "an omitted field must not read as zero")
+	assert.Nil(t, s.BlockInterval)
+}
+
+// Starting at the epoch is a deliberate choice, and has to survive as one.
+func TestParseKeepsAnExplicitZeroGenesis(t *testing.T) {
+	s, err := Parse([]byte(`
+name: epoch
+genesis_timestamp: 0
+timeline:
+  - at_height: 1
+    finalize: {height: 1}
+`))
+	require.NoError(t, err)
+	require.NotNil(t, s.GenesisTimestamp, "an explicit zero is not the same as omitting the field")
+	assert.Equal(t, uint64(0), *s.GenesisTimestamp)
+}

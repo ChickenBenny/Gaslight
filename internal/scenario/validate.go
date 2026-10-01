@@ -14,6 +14,10 @@ import (
 // chaos tool's worst outcome is a green run against a fault that never fired,
 // so every rejection names the location and the offending value.
 func (s *Scenario) validate() error {
+	if s.BlockInterval != nil && *s.BlockInterval == 0 {
+		return fmt.Errorf("scenario: block_interval 0 would stop the chain's clock")
+	}
+
 	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Errorf("scenario: name is required")
 	}

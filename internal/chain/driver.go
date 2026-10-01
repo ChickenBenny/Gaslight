@@ -21,28 +21,58 @@ var (
 // current snapshot and atomically publishes the new one, so readers are
 // lock-free and never observe torn state.
 type Driver struct {
-	mu      sync.Mutex
-	current atomic.Pointer[ChainSnapshot]
-	seq     uint64
-	chainID uint64
-	subs    map[uint64]chan *Block
-	subSeq  uint64
+	mu            sync.Mutex
+	current       atomic.Pointer[ChainSnapshot]
+	seq           uint64
+	chainID       uint64
+	subs          map[uint64]chan *Block
+	subSeq        uint64
+	genesisTime   uint64
+	blockInterval uint64
+}
+
+const (
+	defaultGenesisTime   = 1767225600 // 2026-01-01 00:00:00 UTC
+	defaultBlockInterval = 12
+)
+
+type Option func(*Driver)
+
+func WithGenesisTime(t uint64) Option {
+	return func(d *Driver) {
+		d.genesisTime = t
+	}
+}
+
+func WithBlockInterval(interval uint64) Option {
+	return func(d *Driver) {
+		if interval > 0 {
+			d.blockInterval = interval
+		}
+	}
 }
 
 // NewDriver returns a Driver whose chain contains only the genesis block.
-func NewDriver(chainID uint64) *Driver {
+func NewDriver(chainID uint64, opts ...Option) *Driver {
+	d := &Driver{
+		chainID:       chainID,
+		genesisTime:   defaultGenesisTime,
+		blockInterval: defaultBlockInterval,
+	}
+	for _, opt := range opts {
+		opt(d)
+	}
 	genesis := &Block{
 		Number:     0,
 		Hash:       hashBlock(0, 0, Hash{}, nil),
 		ParentHash: Hash{},
+		Timestamp:  d.genesisTime,
 	}
 	snap := &ChainSnapshot{
 		blocks:    map[Hash]*Block{genesis.Hash: genesis},
 		canonical: []Hash{genesis.Hash},
 		head:      genesis.Hash,
 	}
-
-	d := &Driver{chainID: chainID}
 	d.current.Store(snap)
 	return d
 }
@@ -155,7 +185,12 @@ func (d *Driver) buildBlock(parent *Block, txs []Tx) *Block {
 		Number:     number,
 		Hash:       hashBlock(d.seq, number, parent.Hash, cloned),
 		ParentHash: parent.Hash,
+		Timestamp:  d.timestampAt(number),
 		Txs:        cloned,
 		Receipts:   receipts,
 	}
+}
+
+func (d *Driver) timestampAt(number uint64) uint64 {
+	return d.genesisTime + number*d.blockInterval
 }
