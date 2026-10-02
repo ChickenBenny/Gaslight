@@ -34,7 +34,7 @@ func newStack(t *testing.T, path string) (*stack, *scenario.Scenario) {
 	s, err := scenario.Load(path)
 	require.NoError(t, err, "the shipped example must load")
 
-	d := chain.NewDriver(s.ChainID, clockOptions(s)...)
+	d := chain.NewDriver(s.ChainID, s.DriverOptions()...)
 	reg := faults.NewRegistry()
 	return &stack{
 		t:      t,

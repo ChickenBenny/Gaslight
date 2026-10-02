@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,6 +120,26 @@ func TestEveryExampleIsRecorded(t *testing.T) {
 	for _, path := range examples(t) {
 		_, err := os.Stat(goldenPath(path))
 		require.NoErrorf(t, err, "%s is not covered by the reproducibility gate", filepath.Base(path))
+	}
+}
+
+// The other direction. Renaming or deleting a scenario leaves its recording
+// behind, and -rewrite-golden writes the new one without removing the old, so
+// nothing would ever notice. A testdata directory that no longer lists what
+// the gate covers is how a gate starts describing a project that has moved on.
+func TestNoRecordingIsOrphaned(t *testing.T) {
+	recorded, err := filepath.Glob(filepath.Join("testdata", "*.golden"))
+	require.NoError(t, err)
+
+	wanted := map[string]bool{}
+	for _, path := range examples(t) {
+		wanted[goldenPath(path)] = true
+	}
+
+	for _, g := range recorded {
+		assert.Truef(t, wanted[g],
+			"%s records a scenario that no longer exists; delete it, or restore the example it belongs to",
+			filepath.Base(g))
 	}
 }
 

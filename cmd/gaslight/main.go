@@ -40,23 +40,6 @@ func flagGiven(name string) bool {
 	return given
 }
 
-// clockOptions carries a scenario's chain clock to the driver. A nil field is
-// not the same as a zero one: an omitted genesis_timestamp keeps the driver's
-// default, while an explicit 0 asks for the epoch.
-func clockOptions(sc *scenario.Scenario) []chain.Option {
-	if sc == nil {
-		return nil
-	}
-	var opts []chain.Option
-	if sc.GenesisTimestamp != nil {
-		opts = append(opts, chain.WithGenesisTime(*sc.GenesisTimestamp))
-	}
-	if sc.BlockInterval != nil {
-		opts = append(opts, chain.WithBlockInterval(*sc.BlockInterval))
-	}
-	return opts
-}
-
 func main() {
 	addr := flag.String("addr", ":8545", "listen address")
 	chainID := flag.Uint64("chain-id", 1, "chain id")
@@ -90,7 +73,7 @@ func main() {
 		log.Printf("no block time given, running the scenario at %s", *blockTime)
 	}
 
-	d := chain.NewDriver(id, clockOptions(sc)...)
+	d := chain.NewDriver(id, sc.DriverOptions()...)
 	reg := faults.NewRegistry()
 	srv := transport.NewServer(rpc.New(d, id, reg), d)
 

@@ -1,5 +1,7 @@
 package scenario
 
+import "github.com/ChickenBenny/Gaslight/internal/chain"
+
 // Scenario is a parsed scenario file: the script Gaslight performs. Everything
 // here is the wire shape, held as written in the file — values are strings so
 // that parsing and validation happen explicitly and can report what is wrong.
@@ -11,6 +13,27 @@ type Scenario struct {
 	BlockInterval    *uint64 `yaml:"block_interval,omitempty"`
 	EndAtHeight      uint64  `yaml:"end_at_height,omitempty"`
 	Timeline         []Event `yaml:"timeline"`
+}
+
+// DriverOptions configures a chain to run the clock this scenario describes.
+// It lives here, beside the fields it reads, so that the server and anything
+// recording a run build their chain the same way — a second copy would let the
+// two drift while every recording still matched itself.
+//
+// A nil field is not a zero one: an omitted genesis_timestamp keeps the
+// driver's default, while an explicit 0 asks for the epoch.
+func (s *Scenario) DriverOptions() []chain.Option {
+	if s == nil {
+		return nil
+	}
+	var opts []chain.Option
+	if s.GenesisTimestamp != nil {
+		opts = append(opts, chain.WithGenesisTime(*s.GenesisTimestamp))
+	}
+	if s.BlockInterval != nil {
+		opts = append(opts, chain.WithBlockInterval(*s.BlockInterval))
+	}
+	return opts
 }
 
 // Event is one beat of the timeline: at a given height, exactly one action.

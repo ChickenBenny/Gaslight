@@ -18,7 +18,7 @@ func Record(path string) (string, error) {
 		return "", err
 	}
 
-	d := chain.NewDriver(sc.ChainID, clockOptions(sc)...)
+	d := chain.NewDriver(sc.ChainID, sc.DriverOptions()...)
 	// The registry is wrapped rather than read afterwards: a fault changes
 	// nothing about the chain, so without recording the calls themselves a
 	// scenario's lies would be outside the gate entirely.
@@ -61,20 +61,6 @@ func Record(path string) (string, error) {
 	writeChain(&b, d.Snapshot())
 
 	return b.String(), nil
-}
-
-func clockOptions(sc *scenario.Scenario) []chain.Option {
-	if sc == nil {
-		return nil
-	}
-	var opts []chain.Option
-	if sc.GenesisTimestamp != nil {
-		opts = append(opts, chain.WithGenesisTime(*sc.GenesisTimestamp))
-	}
-	if sc.BlockInterval != nil {
-		opts = append(opts, chain.WithBlockInterval(*sc.BlockInterval))
-	}
-	return opts
 }
 
 func txHashes(blk *chain.Block) string {
