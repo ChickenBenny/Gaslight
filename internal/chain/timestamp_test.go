@@ -26,14 +26,34 @@ func TestBlockTimestampsFollowTheHeight(t *testing.T) {
 }
 
 func TestBlockTimestampsStrictlyIncrease(t *testing.T) {
-	d := NewDriver(1)
-
-	prev := d.Snapshot().Head().Timestamp
-	for n := 0; n < 10; n++ {
-		b := d.ProduceBlock(nil)
-		assert.Greaterf(t, b.Timestamp, prev, "block %d should be later than its parent", b.Number)
-		prev = b.Timestamp
+	// Both the default clock and a configured one, since the configured path
+	// is where a scenario file can reach.
+	for name, d := range map[string]*Driver{
+		"default":  NewDriver(1),
+		"wide":     NewDriver(1, WithGenesisTime(1767225600), WithBlockInterval(86400)),
+		"at epoch": NewDriver(1, WithGenesisTime(0), WithBlockInterval(1)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			prev := d.Snapshot().Head().Timestamp
+			for n := 0; n < 10; n++ {
+				b := d.ProduceBlock(nil)
+				assert.Greaterf(t, b.Timestamp, prev, "block %d should be later than its parent", b.Number)
+				prev = b.Timestamp
+			}
+		})
 	}
+}
+
+// The driver cannot report an error, so it trusts the clock it is given;
+// scenario.validate is what refuses one that would wrap. This records that
+// division of labour rather than leaving it implied.
+func TestDriverTrustsTheClockItIsGiven(t *testing.T) {
+	d := NewDriver(1, WithGenesisTime(MaxTimestamp), WithBlockInterval(1))
+
+	assert.Equal(t, uint64(MaxTimestamp), d.Snapshot().Head().Timestamp,
+		"the largest safe genesis is still accepted")
+	assert.Equal(t, uint64(MaxTimestamp)+1, d.ProduceBlock(nil).Timestamp,
+		"one past it is produced without complaint, which is why the file is checked")
 }
 
 // Left alone, the chain should look like mainnet rather than like 1970, since

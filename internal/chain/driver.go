@@ -31,9 +31,15 @@ type Driver struct {
 	blockInterval uint64
 }
 
+// The clock a Driver runs on unless a caller overrides it. Exported so a
+// caller validating a scenario can bound the chain it is about to describe.
 const (
-	defaultGenesisTime   = 1767225600 // 2026-01-01 00:00:00 UTC
-	defaultBlockInterval = 12
+	DefaultGenesisTime   = 1767225600 // 2026-01-01 00:00:00 UTC
+	DefaultBlockInterval = 12         // seconds, matching mainnet
+
+	// MaxTimestamp keeps a block time exact in a JSON number, which is how a
+	// JavaScript client will most likely read it back.
+	MaxTimestamp = 1<<53 - 1
 )
 
 type Option func(*Driver)
@@ -56,8 +62,8 @@ func WithBlockInterval(interval uint64) Option {
 func NewDriver(chainID uint64, opts ...Option) *Driver {
 	d := &Driver{
 		chainID:       chainID,
-		genesisTime:   defaultGenesisTime,
-		blockInterval: defaultBlockInterval,
+		genesisTime:   DefaultGenesisTime,
+		blockInterval: DefaultBlockInterval,
 	}
 	for _, opt := range opts {
 		opt(d)

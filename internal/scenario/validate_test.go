@@ -380,6 +380,42 @@ timeline:
 			want: []string{"block_interval", "0"},
 		},
 		{
+			// uint64 arithmetic wraps, so an overflowing clock does not fail —
+			// it silently runs backwards, which is the one thing a block time
+			// must never do.
+			name: "genesis timestamp beyond what a JSON number holds exactly",
+			yaml: `
+name: s
+genesis_timestamp: 18446744073709551600
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
+			want: []string{"genesis_timestamp", "18446744073709551600"},
+		},
+		{
+			name: "block interval that would wrap the clock",
+			yaml: `
+name: s
+block_interval: 9223372036854775808
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
+			want: []string{"block_interval", "JSON number"},
+		},
+		{
+			// Neither field is extreme on its own; the run is simply long
+			// enough that the two together overflow.
+			name: "a long run at a wide interval",
+			yaml: `
+name: s
+block_interval: 1000000000
+end_at_height: 1000000000
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
+			want: []string{"block_interval", "JSON number"},
+		},
+		{
 			name: "fault with unknown type",
 			yaml: `
 name: s
@@ -544,6 +580,18 @@ timeline:
 name: s
 genesis_timestamp: 0
 block_interval: 12
+timeline:
+  - at_height: 1
+    finalize: {height: 1}`,
+		},
+		{
+			// Well inside the bound: a year of five-minute blocks.
+			name: "a wide interval over a long run that still fits",
+			yaml: `
+name: s
+genesis_timestamp: 1767225600
+block_interval: 300
+end_at_height: 100000
 timeline:
   - at_height: 1
     finalize: {height: 1}`,
