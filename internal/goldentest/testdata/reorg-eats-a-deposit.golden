@@ -1,0 +1,34 @@
+scenario reorg-eats-a-deposit.yaml
+chain id 1337
+
+step  height  finalized  head                                                              produced              faults
+   1       1          0  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -                     -
+   2       2          0  a51bed04244b6f20de73f780caa068a65350f7ca457efb426c830c3d45b63bc5  -                     -
+   3       3          0  cd295166a842c44d164e2c4dc8349bb09d2155f60be3955a91883d2ce233daf0  alice-deposit=1742ca6fcd858cc1e57e134d200bd49b87de399e27ea46f8d107e8099d14d4a9  -
+   4       4          0  96a3fdcbb4aebcc3c1b55984ae80ac4ecc4c4ba98b5ddd991a96fbbfa9db8fed  -                     -
+   5       4          0  96a3fdcbb4aebcc3c1b55984ae80ac4ecc4c4ba98b5ddd991a96fbbfa9db8fed  -                     enable(eth_getTransactionReceipt,false_200,count=1,delay=0s)
+   6       5          0  10c7e4deead21b2a28953f4069f4c28e6192327d2ae9ffc08084afae4377e59e  -                     -
+   7       6          0  06c28b17863a8168b7996fcb1b25098210c3c8978d9ba6b98e596d85b89aabaa  -                     -
+   8       7          0  128bdf54f290d4e86c92bc94aafdf20f9971fe0bcd8bb042d96698e25aed8e2a  -                     -
+   9       8          0  088356a66e0f1e3facdab308c6d0b0ae26b4061eb1b9ddd8cd897142b9b62ae9  -                     -
+  10       9          0  cd67f72e26f89bca02833bb9598d7151f8281f49d0a5516f959ad1c894bc3ed1  -                     -
+  11       9          0  cd67f72e26f89bca02833bb9598d7151f8281f49d0a5516f959ad1c894bc3ed1  -                     clear()
+  12      10          0  5555f4e4b72ee09d934aac66d9ec627e2903de9605ebc58b265248a9e50d0a0a  -                     -
+
+steps 12
+final height 10
+finalized 0
+
+canonical chain
+height   timestamp  hash                                                              txs
+     0  1767225600  17b0761f87b081d5cf10757ccc89f12be355c70e2e29df288b65b30710dcbcd1  -
+     1  1767225612  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -
+     2  1767225624  a51bed04244b6f20de73f780caa068a65350f7ca457efb426c830c3d45b63bc5  -
+     3  1767225636  d021e2ece293d15e477bf28a981164bd6aef9cdc34bb7816d6926b6079863103  -
+     4  1767225648  6350816dceb19b4542d3a1e914dffe5670e0899b5758d66f8b013ae0a0a4688e  -
+     5  1767225660  5948643749e995d14c7541ec663329980dcd93db1c7e8cf40658d732a4ca0ff0  -
+     6  1767225672  ba3a878cad8b6b6a94a9ed3cdf52e6bcad70af40e22b4129f26e6ef07daf410f  -
+     7  1767225684  128bdf54f290d4e86c92bc94aafdf20f9971fe0bcd8bb042d96698e25aed8e2a  -
+     8  1767225696  088356a66e0f1e3facdab308c6d0b0ae26b4061eb1b9ddd8cd897142b9b62ae9  -
+     9  1767225708  cd67f72e26f89bca02833bb9598d7151f8281f49d0a5516f959ad1c894bc3ed1  -
+    10  1767225720  5555f4e4b72ee09d934aac66d9ec627e2903de9605ebc58b265248a9e50d0a0a  -

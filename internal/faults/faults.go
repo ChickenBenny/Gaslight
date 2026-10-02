@@ -61,6 +61,12 @@ func NewFault(method string, t Type, count int, delay time.Duration) *Fault {
 	return f
 }
 
+// Remaining reports how many times this fault will still fire; -1 means it is
+// unlimited. The budget is otherwise invisible from outside, which leaves any
+// change to how a count is interpreted unobservable to a caller recording what
+// a scenario configured.
+func (f *Fault) Remaining() int64 { return f.remaining.Load() }
+
 func (f *Fault) spent() bool { return f.remaining.Load() == 0 }
 
 func (f *Fault) consume() bool {

@@ -1,0 +1,30 @@
+name: reorg-eats-three-deposits
+description: >-
+  Three users deposit in the same block, so one reorg takes all three at once.
+  A watcher that reverses deposits one at a time, or stops at the first
+  failure, loses the rest.
+chain_id: 1337
+
+timeline:
+  - at_height: 3
+    produce:
+      txs:
+        - id: alice-deposit
+          from: alice
+          to: exchange
+          value: "1000000000000000000"
+        - id: bob-deposit
+          from: bob
+          to: exchange
+          value: "500000000000000000"
+        - id: carol-deposit
+          from: carol
+          to: exchange
+          value: "3000000000000000000"
+
+  - at_height: 6
+    reorg:
+      fork_from: 2
+      branch_length: 5
+
+end_at_height: 8

@@ -1,0 +1,23 @@
+scenario node-lies-about-a-receipt.yaml
+chain id 1337
+
+step  height  finalized  head                                                              produced              faults
+   1       1          0  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -                     -
+   2       1          0  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -                     enable(eth_getTransactionReceipt,false_200,count=2,delay=0s)
+   3       2          0  03d8dd24e53c1a19d3774f4f2d34c8cf077db465e48ed60a5042efb3e52c57b6  alice-deposit=1742ca6fcd858cc1e57e134d200bd49b87de399e27ea46f8d107e8099d14d4a9  -
+   4       3          0  ad4e6491df83ecc2f31f114fad078a36e997909793a14673ff41009bc90e1b08  -                     -
+   5       4          0  31156ea33043e27748dfea0ed3cd3aa6c7805f3eb29c256918a7c645906110dd  -                     -
+   6       5          0  53400d7180ad42cfd8b580569af1f2255d92fd2ffa7c48d40b780f70f2345539  -                     -
+
+steps 6
+final height 5
+finalized 0
+
+canonical chain
+height   timestamp  hash                                                              txs
+     0  1767225600  17b0761f87b081d5cf10757ccc89f12be355c70e2e29df288b65b30710dcbcd1  -
+     1  1767225612  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -
+     2  1767225624  03d8dd24e53c1a19d3774f4f2d34c8cf077db465e48ed60a5042efb3e52c57b6  alice-deposit=1742ca6fcd858cc1e57e134d200bd49b87de399e27ea46f8d107e8099d14d4a9
+     3  1767225636  ad4e6491df83ecc2f31f114fad078a36e997909793a14673ff41009bc90e1b08  -
+     4  1767225648  31156ea33043e27748dfea0ed3cd3aa6c7805f3eb29c256918a7c645906110dd  -
+     5  1767225660  53400d7180ad42cfd8b580569af1f2255d92fd2ffa7c48d40b780f70f2345539  -

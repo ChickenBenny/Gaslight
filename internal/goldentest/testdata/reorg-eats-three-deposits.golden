@@ -1,0 +1,28 @@
+scenario reorg-eats-three-deposits.yaml
+chain id 1337
+
+step  height  finalized  head                                                              produced              faults
+   1       1          0  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -                     -
+   2       2          0  a51bed04244b6f20de73f780caa068a65350f7ca457efb426c830c3d45b63bc5  -                     -
+   3       3          0  e6f374fb9ae4d1e18606ac0deacc750f2a958fcf8893d0525c905158f597aeb8  alice-deposit=1742ca6fcd858cc1e57e134d200bd49b87de399e27ea46f8d107e8099d14d4a9 bob-deposit=9b7589c24ed1edf5d2f4aed92609d6aae06ce9a893088065430ceba7e6b249a5 carol-deposit=fbf8fc6f183da40f5cb1eb579ca62de09d534e385f2a8f87adfad359c182d046  -
+   4       4          0  f6ece3a34e1ebc6c6d485df35290a9541739ae712dbc62b4c380bdc85ebfbf51  -                     -
+   5       5          0  8c0bf947ef250f27015cec6b8cbcfea3cb9518e1856c509148f045bc5735a991  -                     -
+   6       6          0  c732f2856da9609536491f87215440531c8c63c4013581b0149841e6f62f4e66  -                     -
+   7       7          0  128bdf54f290d4e86c92bc94aafdf20f9971fe0bcd8bb042d96698e25aed8e2a  -                     -
+   8       8          0  088356a66e0f1e3facdab308c6d0b0ae26b4061eb1b9ddd8cd897142b9b62ae9  -                     -
+
+steps 8
+final height 8
+finalized 0
+
+canonical chain
+height   timestamp  hash                                                              txs
+     0  1767225600  17b0761f87b081d5cf10757ccc89f12be355c70e2e29df288b65b30710dcbcd1  -
+     1  1767225612  0faaad163a9f38e13b7ba0642c007f8424800dde515b3a5337c42782015b4425  -
+     2  1767225624  a51bed04244b6f20de73f780caa068a65350f7ca457efb426c830c3d45b63bc5  -
+     3  1767225636  d021e2ece293d15e477bf28a981164bd6aef9cdc34bb7816d6926b6079863103  -
+     4  1767225648  6350816dceb19b4542d3a1e914dffe5670e0899b5758d66f8b013ae0a0a4688e  -
+     5  1767225660  5948643749e995d14c7541ec663329980dcd93db1c7e8cf40658d732a4ca0ff0  -
+     6  1767225672  ba3a878cad8b6b6a94a9ed3cdf52e6bcad70af40e22b4129f26e6ef07daf410f  -
+     7  1767225684  128bdf54f290d4e86c92bc94aafdf20f9971fe0bcd8bb042d96698e25aed8e2a  -
+     8  1767225696  088356a66e0f1e3facdab308c6d0b0ae26b4061eb1b9ddd8cd897142b9b62ae9  -

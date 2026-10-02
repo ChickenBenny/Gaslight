@@ -36,3 +36,22 @@ jobs:
 
       - name: test (race)
         run: go test -race ./...
+
+      # Run on its own so that a reproducibility failure reads as one in the
+      # log, rather than as a line inside a full test run. -count=1 defeats the
+      # result cache: a cached pass would make the gate decorative on any
+      # branch that did not touch these packages.
+      - name: reproducibility gate
+        run: go test -count=1 ./internal/goldentest/
+
+      # A recording that no longer matches the code is a failure, so it must
+      # never be rewritten as a side effect of running the suite. If this step
+      # dirties the tree, the committed recordings were stale.
+      - name: recordings are current
+        run: |
+          go test -count=1 ./internal/goldentest/ -rewrite-golden
+          if ! git diff --quiet -- internal/goldentest/testdata; then
+            echo "Recordings changed when regenerated, so the committed ones are stale:"
+            git --no-pager diff -- internal/goldentest/testdata
+            exit 1
+          fi
