@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ChickenBenny/Gaslight/internal/chain"
 	"github.com/ChickenBenny/Gaslight/internal/faults"
 	"github.com/ChickenBenny/Gaslight/internal/rpc"
 )
@@ -14,6 +15,10 @@ import (
 // chaos tool's worst outcome is a green run against a fault that never fired,
 // so every rejection names the location and the offending value.
 func (s *Scenario) validate() error {
+	if s.BlockInterval != nil && *s.BlockInterval == 0 {
+		return fmt.Errorf("scenario: block_interval 0 would stop the chain's clock")
+	}
+
 	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Errorf("scenario: name is required")
 	}
@@ -97,6 +102,34 @@ func (s *Scenario) validate() error {
 	if s.EndAtHeight > 0 && s.EndAtHeight < height {
 		return fmt.Errorf("scenario: end_at_height %d is below the height the timeline reaches (%d)",
 			s.EndAtHeight, height)
+	}
+	if s.EndAtHeight > height {
+		height = s.EndAtHeight
+	}
+	return s.validateClock(height)
+}
+
+// validateClock rejects a chain whose last block time would not fit. The
+// arithmetic is unsigned, so an overflow wraps rather than failing: the clock
+// silently runs backwards, which is the one thing a block time must never do.
+// Checking the final height is enough, because the modelled height only rises.
+func (s *Scenario) validateClock(height uint64) error {
+	genesis := uint64(chain.DefaultGenesisTime)
+	if s.GenesisTimestamp != nil {
+		genesis = *s.GenesisTimestamp
+	}
+	interval := uint64(chain.DefaultBlockInterval)
+	if s.BlockInterval != nil {
+		interval = *s.BlockInterval
+	}
+
+	if genesis > chain.MaxTimestamp {
+		return fmt.Errorf("scenario: genesis_timestamp %d is above the largest block time that stays "+
+			"exact in a JSON number (%d)", genesis, uint64(chain.MaxTimestamp))
+	}
+	if height > 0 && interval > (chain.MaxTimestamp-genesis)/height {
+		return fmt.Errorf("scenario: a block_interval of %d would put the time of block %d past the largest "+
+			"block time that stays exact in a JSON number (%d)", interval, height, uint64(chain.MaxTimestamp))
 	}
 	return nil
 }
