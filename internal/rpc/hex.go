@@ -3,6 +3,7 @@ package rpc
 import (
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,13 @@ func encodeUint64(v uint64) string {
 		return "0x0"
 	}
 	return "0x" + strconv.FormatUint(v, 16)
+}
+
+func encodeBigInt(v *big.Int) string {
+	if v == nil || v.Sign() == 0 {
+		return "0x0"
+	}
+	return "0x" + v.Text(16)
 }
 
 func decodeUint64(s string) (uint64, error) {

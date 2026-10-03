@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -117,4 +118,41 @@ func TestEncodeAddressIsFixedLength(t *testing.T) {
 	a[19] = 0xad
 	assert.Equal(t, "0xde"+strings.Repeat("0", 36)+"ad", encodeAddress(a))
 	assert.Len(t, encodeAddress(a), 42)
+}
+
+// Two encoders, one wire format. A block number and a transfer value have to
+// look identical on the wire when they hold the same number, or the quantity
+// rules have drifted apart between them — and only on whichever fields happen
+// to use the one that changed.
+func TestTheTwoQuantityEncodersAgree(t *testing.T) {
+	for _, v := range []uint64{
+		0, 1, 12, 255, 256,
+		1 << 32,
+		1_000_000_000_000_000_000, // 1 ETH, the largest value both can hold
+		math.MaxUint64,
+	} {
+		assert.Equalf(t, encodeUint64(v), encodeBigInt(new(big.Int).SetUint64(v)),
+			"the two encoders disagreed on %d", v)
+	}
+}
+
+// Value is a *big.Int precisely because a transfer can exceed what a uint64
+// holds: 1000 ETH already does.
+func TestEncodeBigIntHandlesValuesBeyondUint64(t *testing.T) {
+	v, ok := new(big.Int).SetString("1000000000000000000000", 10) // 1000 ETH
+	require.True(t, ok)
+	require.False(t, v.IsUint64(), "this test is pointless if it fits in a uint64")
+
+	assert.Equal(t, "0x3635c9adc5dea00000", encodeBigInt(v))
+}
+
+// A quantity carries no leading zeros and zero is "0x0", so a client parsing
+// it as a number reads what was meant. A nil value is the zero amount rather
+// than a crash, matching how hash.go already treats one.
+func TestEncodeBigIntFollowsTheQuantityRules(t *testing.T) {
+	assert.Equal(t, "0x0", encodeBigInt(nil))
+	assert.Equal(t, "0x0", encodeBigInt(big.NewInt(0)))
+	assert.Equal(t, "0x1", encodeBigInt(big.NewInt(1)))
+	assert.Equal(t, "0xff", encodeBigInt(big.NewInt(255)), "lower case, no padding")
+	assert.NotContains(t, encodeBigInt(big.NewInt(16)), "0x010", "no leading zero")
 }
