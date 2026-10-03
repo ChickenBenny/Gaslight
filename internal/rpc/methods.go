@@ -98,6 +98,30 @@ func (h *Handler) ethGetTransactionReceipt(_ context.Context, g snapshotGetter, 
 	return nil, errInternal() // block found but receipt missing: invariant broken
 }
 
+func (h *Handler) ethGetTransactionByHash(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
+	if len(params) < 1 {
+		return nil, errInvalidParams("missing transaction hash")
+	}
+	var txHashStr string
+	if err := json.Unmarshal(params[0], &txHashStr); err != nil {
+		return nil, errInvalidParams("transaction hash must be a string")
+	}
+	txHash, err := decodeHash(txHashStr)
+	if err != nil {
+		return nil, errInvalidParams("invalid transaction hash")
+	}
+	blk := g.snapshot().BlockByTx(txHash)
+	if blk == nil {
+		return nil, nil
+	}
+	for i := range blk.Txs {
+		if blk.Txs[i].Hash == txHash {
+			return toRPCTx(blk.Txs[i], blk, uint64(i)), nil
+		}
+	}
+	return nil, errInternal()
+}
+
 func resolveHeight(s *chain.ChainSnapshot, tag string) (uint64, error) {
 	switch tag {
 	case "latest", "pending":
