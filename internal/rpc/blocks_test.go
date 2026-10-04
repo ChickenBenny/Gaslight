@@ -203,3 +203,48 @@ func TestBlockMethodsCheckParamsBeforeLookingUpTheBlock(t *testing.T) {
 	require.Nil(t, withFlag.Error)
 	assert.JSONEq(t, "null", string(withFlag.Result), "a block that is simply absent is null")
 }
+
+// go-ethereum's types.Transaction.UnmarshalJSON rejects a transaction missing
+// any of these, and ethers throws on an absent nonce or gasLimit. Gaslight
+// models none of them, but omitting them leaves a node no standard client can
+// read — which the raw-JSON assertions above cannot detect, since they only
+// check the fields we chose to look at.
+func TestTransactionCarriesWhatAStandardClientRequires(t *testing.T) {
+	h, d := newHandler(1)
+	depositBlock(t, d)
+
+	r := call(t, h, "eth_getBlockByNumber", `["0x1",true]`)
+	require.Nil(t, r.Error)
+
+	var b struct {
+		Transactions []map[string]any `json:"transactions"`
+	}
+	require.NoError(t, json.Unmarshal(r.Result, &b))
+	require.Len(t, b.Transactions, 1)
+
+	for _, field := range []string{
+		"hash", "from", "to", "value", "input",
+		"blockHash", "blockNumber", "transactionIndex",
+		"nonce", "gas", "gasPrice", "type", "v", "r", "s",
+	} {
+		assert.Containsf(t, b.Transactions[0], field, "a decoder requires %q", field)
+	}
+}
+
+// An all-zero signature is how geth reads "unsigned", which skips its
+// signature sanity check rather than failing it. A non-zero placeholder would
+// be checked and rejected.
+func TestTransactionSignatureIsAllZero(t *testing.T) {
+	h, d := newHandler(1)
+	blk := depositBlock(t, d)
+
+	r := call(t, h, "eth_getTransactionByHash", `["`+encodeHash(blk.Txs[0].Hash)+`"]`)
+	require.Nil(t, r.Error)
+
+	var tx map[string]string
+	require.NoError(t, json.Unmarshal(r.Result, &tx))
+	for _, field := range []string{"v", "r", "s"} {
+		assert.Equalf(t, "0x0", tx[field], "%q must read as unsigned", field)
+	}
+	assert.Equal(t, "0x5208", tx["gas"], "a plain transfer costs 21000, which is true rather than a placeholder")
+}

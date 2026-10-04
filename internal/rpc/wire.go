@@ -32,6 +32,13 @@ type rpcTx struct {
 	BlockHash        string `json:"blockHash"`
 	BlockNumber      string `json:"blockNumber"`
 	TransactionIndex string `json:"transactionIndex"`
+	Nonce            string `json:"nonce"`
+	Gas              string `json:"gas"`
+	GasPrice         string `json:"gasPrice"`
+	Type             string `json:"type"`
+	V                string `json:"v"`
+	R                string `json:"r"`
+	S                string `json:"s"`
 }
 
 type rpcLog struct {
@@ -107,5 +114,23 @@ func toRPCTx(tx chain.Tx, blk *chain.Block, index uint64) rpcTx {
 		BlockHash:        encodeHash(blk.Hash),
 		BlockNumber:      encodeUint64(blk.Number),
 		TransactionIndex: encodeUint64(index),
+
+		// Gaslight models none of what follows, but a transaction without
+		// these cannot be decoded at all: go-ethereum's UnmarshalJSON rejects
+		// a missing nonce, gas, gasPrice or signature, and ethers throws on an
+		// absent nonce or gasLimit. A fixed value a client should not rely on
+		// is the lesser harm against a node no client can read.
+		//
+		// The gas figure is the one true value here: 21000 is what a plain
+		// transfer costs. An all-zero signature is what geth reads as
+		// "unsigned", which skips its signature sanity check rather than
+		// failing it.
+		Nonce:    "0x0",
+		Gas:      "0x5208",
+		GasPrice: "0x0",
+		Type:     "0x0",
+		V:        "0x0",
+		R:        "0x0",
+		S:        "0x0",
 	}
 }
