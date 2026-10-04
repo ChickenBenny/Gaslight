@@ -66,6 +66,7 @@ var Methods = []string{
 	"eth_getBlockByNumber",
 	"eth_getBlockByHash",
 	"eth_getTransactionReceipt",
+	"eth_getTransactionByHash",
 }
 
 // Serves reports whether this handler answers the named method.
@@ -82,6 +83,7 @@ func New(src SnapshotSource, chainID uint64, fs FaultSource) *Handler {
 		"eth_getBlockByNumber":      h.ethGetBlockByNumber,
 		"eth_getBlockByHash":        h.ethGetBlockByHash,
 		"eth_getTransactionReceipt": h.ethGetTransactionReceipt,
+		"eth_getTransactionByHash":  h.ethGetTransactionByHash,
 	}
 	h.methods = make(map[string]methodFunc, len(rawMethodMap))
 	for name, fn := range rawMethodMap {

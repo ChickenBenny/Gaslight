@@ -21,8 +21,6 @@ func (h *Handler) netVersion(_ context.Context, _ snapshotGetter, _ []json.RawMe
 	return strconv.FormatUint(h.chainID, 10), nil
 }
 
-// ethGetBlockByNumber implements eth_getBlockByNumber. params = [tag|hex, fullTx].
-// v0.1: fullTx (params[1]) is ignored — transactions are always returned as hashes (Refs #3).
 func (h *Handler) ethGetBlockByNumber(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
 	if len(params) < 1 {
 		return nil, errInvalidParams("missing block number")
@@ -36,15 +34,9 @@ func (h *Handler) ethGetBlockByNumber(_ context.Context, g snapshotGetter, param
 	if err != nil {
 		return nil, errInvalidParams("invalid block number")
 	}
-	blk := s.ByNumber(height)
-	if blk == nil {
-		return nil, nil // JSON null
-	}
-	return toRPCBlock(blk), nil
+	return blockResult(s.ByNumber(height), params)
 }
 
-// ethGetBlockByHash implements eth_getBlockByHash. params = [blockHash, fullTx].
-// v0.1: fullTx (params[1]) is ignored — transactions are always returned as hashes (Refs #3).
 func (h *Handler) ethGetBlockByHash(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
 	if len(params) < 1 {
 		return nil, errInvalidParams("missing block hash")
@@ -57,11 +49,29 @@ func (h *Handler) ethGetBlockByHash(_ context.Context, g snapshotGetter, params 
 	if err != nil {
 		return nil, errInvalidParams("invalid block hash")
 	}
-	blk := g.snapshot().ByHash(hash)
-	if blk == nil {
-		return nil, nil // JSON null
+	return blockResult(g.snapshot().ByHash(hash), params)
+}
+
+func blockResult(blk *chain.Block, params []json.RawMessage) (any, *RPCError) {
+	fullTx, rpcErr := parseFullTx(params)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
-	return toRPCBlock(blk), nil
+	if blk == nil {
+		return nil, nil
+	}
+	return toRPCBlock(blk, fullTx), nil
+}
+
+func parseFullTx(params []json.RawMessage) (bool, *RPCError) {
+	if len(params) < 2 {
+		return false, errInvalidParams("missing fullTx")
+	}
+	var full bool
+	if err := json.Unmarshal(params[1], &full); err != nil {
+		return false, errInvalidParams("fullTx must be a boolean")
+	}
+	return full, nil
 }
 
 func (h *Handler) ethGetTransactionReceipt(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
@@ -86,6 +96,30 @@ func (h *Handler) ethGetTransactionReceipt(_ context.Context, g snapshotGetter, 
 		}
 	}
 	return nil, errInternal() // block found but receipt missing: invariant broken
+}
+
+func (h *Handler) ethGetTransactionByHash(_ context.Context, g snapshotGetter, params []json.RawMessage) (any, *RPCError) {
+	if len(params) < 1 {
+		return nil, errInvalidParams("missing transaction hash")
+	}
+	var txHashStr string
+	if err := json.Unmarshal(params[0], &txHashStr); err != nil {
+		return nil, errInvalidParams("transaction hash must be a string")
+	}
+	txHash, err := decodeHash(txHashStr)
+	if err != nil {
+		return nil, errInvalidParams("invalid transaction hash")
+	}
+	blk := g.snapshot().BlockByTx(txHash)
+	if blk == nil {
+		return nil, nil
+	}
+	for i := range blk.Txs {
+		if blk.Txs[i].Hash == txHash {
+			return toRPCTx(blk.Txs[i], blk, uint64(i)), nil
+		}
+	}
+	return nil, errInternal()
 }
 
 func resolveHeight(s *chain.ChainSnapshot, tag string) (uint64, error) {
